@@ -1,33 +1,45 @@
-坡南寻宝记 v5.33.0 微信登录服务端参考实现
+坡南寻宝记 v5.34.0 微信小游戏独立后端
 
-用途
-====
-小游戏客户端只调用 wx.login() 获取一次性 code；真正的 openid 兑换必须在服务器完成。
-绝对不要把微信 AppSecret 写进小游戏 src/config.js 或任何会上传到微信的文件。
+部署目标：
+  https://wxpnxbj.wzpy.net
+管理后台：
+  https://wxpnxbj.wzpy.net/admin
 
-接口
-====
-POST /api/auth/wechat-login
-请求：{ "code": "wx.login返回的code", "deviceId": "...", "appVersion": "..." }
-返回：{ "ok": true, "userId": "pn_xxx", "token": "...", "expiresAt": 123, "isNewUser": true }
+保留现有 Zeabur 环境变量：
+  WECHAT_APPID=微信小游戏 AppID
+  WECHAT_APPSECRET=微信小游戏 AppSecret
+  AUTH_TOKEN_SECRET=至少24位，建议48位以上
+  PASSWORD=小游戏独立管理后台密码
+  USER_DB_FILE=/data/auth/users.json
 
-部署
-====
-1. Node.js 18+
-2. 配置环境变量：WECHAT_APPID、WECHAT_APPSECRET、AUTH_TOKEN_SECRET。
-3. npm start
-4. 将该服务通过 HTTPS 暴露，并把 /api/auth/wechat-login 接到小游戏配置的 API 域名。
-   当前小游戏默认请求：https://pnxbj.wzpy.com/api/auth/wechat-login
-5. 微信公众平台/小游戏后台中，需要把对应 HTTPS 域名加入 request 合法域名。
+可选：
+  MINIGAME_DATA_DIR=/data
 
-数据
-====
-参考版为了可直接运行，用 JSON 文件保存 openid -> userId 映射。
-正式上线前建议迁移到你现有数据库（MySQL/PostgreSQL/SQLite 都可以），字段至少包括：
-user_id, openid(唯一), unionid(可空), created_at, last_login_at。
+不要把 AppSecret、AUTH_TOKEN_SECRET、PASSWORD 写入 GitHub。
+不需要重新挂载硬盘；继续使用当前 Service 已挂载的 /data Volume。
+程序会自动创建：
+  /data/auth/users.json
+  /data/saves/*.json
+  /data/config/runtime.json
+  /data/stats/visits.json
+  /data/stats/stage-records.json
+  /data/leaderboard/entries.json
 
-安全
-====
-- AppSecret 只放服务器环境变量。
-- 客户端不接收 openid，只接收内部 userId 和登录 token。
-- 生产环境建议把 token 校验接入后续云存档、排行榜写入接口。
+主要接口：
+  POST /api/auth/wechat-login
+  POST /api/save/sync
+  GET  /api/save
+  GET  /api/config
+  POST /api/visit-counter
+  GET/POST /api/stage-records
+  GET/POST /api/leaderboard
+  POST /api/leaderboard/wechat
+
+后台：
+  GET  /admin
+  POST /api/admin/login
+  GET  /api/admin/summary
+  GET  /api/admin/players
+  GET  /api/admin/player?userId=...
+  GET/PUT /api/admin/config
+  GET  /api/admin/leaderboard

@@ -1,0 +1,57 @@
+坡南寻宝记 v5.34.0 独立后端升级步骤（Zeabur + GitHub）
+
+当前前提：
+- GitHub 仓库已经绑定 wx-pnxbj Zeabur Service
+- 域名：https://wxpnxbj.wzpy.net
+- /data Volume 已挂载并正常持久化
+- 微信登录已经真机跑通
+
+本次不需要重新创建 Service、域名、硬盘或环境变量。
+
+一、把本包内容放到 GitHub 仓库根目录
+根目录最终应至少有：
+  server.js
+  package.json
+  .gitignore
+  README.txt
+  public/admin/index.html
+
+不要上传 .env，也不要把任何密钥写进代码。
+
+二、保留 Zeabur 当前环境变量
+  WECHAT_APPID
+  WECHAT_APPSECRET
+  AUTH_TOKEN_SECRET
+  PASSWORD
+  USER_DB_FILE=/data/auth/users.json
+
+可选新增：
+  MINIGAME_DATA_DIR=/data
+不加也可以，程序会根据 USER_DB_FILE 自动推导 /data。
+
+三、提交 GitHub
+提交并 push 后，GitHub 绑定的 Zeabur Service 应自动构建新版本。
+如果控制台只看到“重新启动”而没有“重新部署”，也不影响 GitHub push 自动部署。
+
+四、验证
+1) 打开：
+   https://wxpnxbj.wzpy.net/health
+应看到 version=5.34.0，authConfigured=true，adminConfigured=true。
+
+2) 打开：
+   https://wxpnxbj.wzpy.net/admin
+使用 Zeabur 环境变量 PASSWORD 的值登录。
+
+3) 手机打开微信小游戏，成功登录后继续玩一小段。
+后台“玩家与云存档”应出现该玩家，并显示当前站、总分、宝物数、最后存档时间。
+
+五、数据目录
+程序会自动在现有 /data Volume 下建立：
+  /data/auth/users.json              原微信身份数据，继续沿用
+  /data/saves/*.json                 云存档
+  /data/config/runtime.json          小游戏运行配置
+  /data/stats/visits.json            访问计数
+  /data/stats/stage-records.json     全服单关纪录
+  /data/leaderboard/entries.json     英雄榜
+
+不需要手工创建这些目录，更不要重新挂载 /data。

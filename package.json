@@ -1,6 +1,6 @@
 {
-  "name": "ponan-wechat-auth",
-  "version": "5.33.0",
+  "name": "ponan-wechat-minigame",
+  "version": "5.34.0",
   "private": true,
   "scripts": { "start": "node server.js" },
   "engines": { "node": ">=18" }
