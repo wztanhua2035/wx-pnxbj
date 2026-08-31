@@ -1,0 +1,21 @@
+坡南寻宝记 wx-pnxbj v5.35.0 Zeabur 升级步骤
+
+前提：现有 v5.34.2 已正常运行，域名 wxpnxbj.wzpy.net、/data Volume、微信登录和管理后台均正常。
+
+1. 解压“GitHub根目录覆盖包”，把文件覆盖到 wx-pnxbj GitHub 仓库根目录。
+2. 不要上传 .env，不修改/公开任何密钥。
+3. 保留现有 Zeabur 环境变量：
+   WECHAT_APPID
+   WECHAT_APPSECRET
+   AUTH_TOKEN_SECRET
+   PASSWORD
+   USER_DB_FILE=/data/auth/users.json
+   （MINIGAME_DATA_DIR=/data 如已设置则继续保留）
+4. 提交并 push GitHub，等待 Zeabur 自动部署。
+5. 验证 https://wxpnxbj.wzpy.net/health
+   应返回 version: "5.35.0"。
+6. 打开 https://wxpnxbj.wzpy.net/admin
+   后台应显示“正式英雄榜”，玩家页应有“玩家昵称”列。
+7. 再更新小游戏客户端 v5.35.0。
+
+无需重新创建 Service、域名、Volume 或环境变量。

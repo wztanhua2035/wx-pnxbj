@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * 坡南寻宝记 v5.34.0 微信小游戏独立后端
+ * 坡南寻宝记 v5.35.0 微信小游戏独立后端
  * Node.js 18+，无第三方依赖。
  *
  * 环境变量：
@@ -20,7 +20,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const VERSION = '5.34.2';
+const VERSION = '5.35.0';
 const PORT = Number(process.env.PORT || 3000);
 const APPID = String(process.env.WECHAT_APPID || '').trim();
 const APPSECRET = String(process.env.WECHAT_APPSECRET || '').trim();
@@ -197,6 +197,40 @@ function findUserById(db, userId) {
   return null;
 }
 
+function defaultDisplayName(userId) {
+  const s = String(userId || '').replace(/[^a-z0-9]/gi, '');
+  return '寻宝客' + (s.slice(-4) || '0000');
+}
+function cleanDisplayName(value, userId) {
+  const raw = String(value || '').replace(/[\r\n\t]/g, ' ').trim().replace(/\s{2,}/g, ' ');
+  return (raw || defaultDisplayName(userId)).slice(0, 20);
+}
+function cleanAvatarUrl(value) {
+  const s = String(value || '').trim();
+  if (!s) return '';
+  if (!/^https:\/\//i.test(s)) return '';
+  return s.slice(0, 800);
+}
+function publicProfile(user) {
+  const u = user || {};
+  return {
+    userId: String(u.userId || ''),
+    displayName: cleanDisplayName(u.displayName, u.userId),
+    avatarUrl: cleanAvatarUrl(u.avatarUrl),
+    profileUpdatedAt: Math.max(0, Number(u.profileUpdatedAt) || 0)
+  };
+}
+function updateUserProfile(userId, input) {
+  const db = readUsersDb(), found = findUserById(db, userId);
+  if (!found) return null;
+  const body = input || {};
+  found.user.displayName = cleanDisplayName(body.displayName != null ? body.displayName : body.nickname, userId);
+  if (body.avatarUrl != null) found.user.avatarUrl = cleanAvatarUrl(body.avatarUrl);
+  found.user.profileUpdatedAt = Date.now();
+  writeUsersDb(db);
+  return publicProfile(found.user);
+}
+
 async function handleLogin(req, res) {
   if (!APPID || !APPSECRET || TOKEN_SECRET.length < 24) {
     json(res, 503, { error: 'wechat auth server is not configured' }); return;
@@ -210,8 +244,10 @@ async function handleLogin(req, res) {
   let user = db.usersByOpenid[openid];
   const isNewUser = !user;
   if (!user) {
+    const createdUserId = newUserId();
     user = {
-      userId: newUserId(), createdAt: Date.now(), lastLoginAt: Date.now(), unionid: wxSession.unionid || '',
+      userId: createdUserId, createdAt: Date.now(), lastLoginAt: Date.now(), unionid: wxSession.unionid || '',
+      displayName: defaultDisplayName(createdUserId), avatarUrl: '', profileUpdatedAt: 0,
       lastDeviceId: String(body.deviceId || '').slice(0, 80), appVersion: String(body.appVersion || '').slice(0, 80)
     };
     db.usersByOpenid[openid] = user;
@@ -223,7 +259,7 @@ async function handleLogin(req, res) {
   }
   writeUsersDb(db);
   const auth = issueToken(user.userId);
-  json(res, 200, { ok: true, userId: user.userId, token: auth.token, expiresAt: auth.expiresAt, isNewUser });
+  json(res, 200, { ok: true, userId: user.userId, token: auth.token, expiresAt: auth.expiresAt, isNewUser, profile: publicProfile(user) });
 }
 
 function safeUserId(userId) {
@@ -326,10 +362,14 @@ function durationText(ms) {
 function sortedEntries(entries) {
   return entries.slice().sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0) || (Number(a.durationMs) || 9e15) - (Number(b.durationMs) || 9e15) || (Number(a.updatedAt) || 0) - (Number(b.updatedAt) || 0));
 }
+function formalSortedEntries(entries) {
+  return sortedEntries((entries || []).filter((x) => x && (x.verified === true || x.source === 'wechat-verified')));
+}
 function submitLeaderboardEntry(entry) {
   const d = readLeaderboard(), id = String(entry.playerId || '').trim();
   let old = d.entries.find((x) => String(x.playerId) === id);
-  const better = !old || Number(entry.score) > Number(old.score) || (Number(entry.score) === Number(old.score) && Number(entry.durationMs) < Number(old.durationMs || 9e15));
+  const promoteVerified = !!(old && entry.verified === true && old.verified !== true);
+  const better = !old || promoteVerified || Number(entry.score) > Number(old.score) || (Number(entry.score) === Number(old.score) && Number(entry.durationMs) < Number(old.durationMs || 9e15));
   if (better) {
     if (old) Object.assign(old, entry, { updatedAt: Date.now() });
     else d.entries.push(Object.assign({}, entry, { createdAt: Date.now(), updatedAt: Date.now() }));
@@ -339,10 +379,24 @@ function submitLeaderboardEntry(entry) {
     old.updatedAt = Date.now();
   }
   const sorted = sortedEntries(d.entries), idx = sorted.findIndex((x) => String(x.playerId) === id), rank = idx >= 0 ? idx + 1 : 0;
-  d.entries = sorted.slice(0, 200);
+  // 正式榜只展示 verified 成绩；底层最多保留 500 条以兼容历史测试/旧接口。
+  d.entries = sorted.slice(0, 500);
   atomicWrite(LEADERBOARD_FILE, d);
   const finalIdx = d.entries.findIndex((x) => String(x.playerId) === id);
   return { rank: finalIdx >= 0 ? finalIdx + 1 : rank, qualified: finalIdx >= 0, entry: finalIdx >= 0 ? d.entries[finalIdx] : null };
+}
+
+function removeLeaderboardEntry(userId) {
+  const d = readLeaderboard(), before = d.entries.length;
+  d.entries = d.entries.filter((x) => String(x.playerId) !== String(userId || ''));
+  if (d.entries.length !== before) atomicWrite(LEADERBOARD_FILE, d);
+  return before - d.entries.length;
+}
+function leaderboardEntryFor(userId) {
+  const sorted = formalSortedEntries(readLeaderboard().entries).slice(0, 200);
+  const idx = sorted.findIndex((x) => String(x.playerId) === String(userId || ''));
+  if (idx < 0) return null;
+  return Object.assign({ rank: idx + 1, durationText: durationText(sorted[idx].durationMs) }, sorted[idx]);
 }
 
 function summarizeSave(save) {
@@ -373,13 +427,14 @@ function adminPlayers(query) {
   const all = Object.values(db.usersByOpenid || {}).map((u) => {
     const rec = u && u.userId ? readSaveRecord(u.userId) : null;
     return {
-      userId: u.userId, createdAt: u.createdAt || 0, lastLoginAt: u.lastLoginAt || 0,
+      userId: u.userId, displayName: publicProfile(u).displayName, avatarUrl: publicProfile(u).avatarUrl,
+      createdAt: u.createdAt || 0, lastLoginAt: u.lastLoginAt || 0,
       appVersion: u.appVersion || '', lastDeviceId: u.lastDeviceId || '', lastSaveAt: u.lastSaveAt || (rec && rec.serverUpdatedAt) || 0,
       progress: summarizeSave(rec && rec.save)
     };
   });
   const q = String(query.q || '').trim().toLowerCase();
-  const filtered = q ? all.filter((x) => String(x.userId).toLowerCase().includes(q) || String(x.appVersion).toLowerCase().includes(q)) : all;
+  const filtered = q ? all.filter((x) => String(x.userId).toLowerCase().includes(q) || String(x.displayName||'').toLowerCase().includes(q) || String(x.appVersion).toLowerCase().includes(q)) : all;
   filtered.sort((a, b) => Number(b.lastLoginAt) - Number(a.lastLoginAt));
   const page = Math.max(1, Number(query.page) || 1), pageSize = Math.max(10, Math.min(100, Number(query.pageSize) || 30));
   const pages = Math.max(1, Math.ceil(filtered.length / pageSize));
@@ -404,7 +459,21 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && p === '/api/auth/me') {
       const userId = requireUser(req, res); if (!userId) return;
       const db = readUsersDb(), found = findUserById(db, userId);
-      json(res, 200, { ok: true, userId, createdAt: found && found.user ? (found.user.createdAt || 0) : 0, lastLoginAt: found && found.user ? (found.user.lastLoginAt || 0) : 0 }); return;
+      json(res, 200, { ok: true, userId, createdAt: found && found.user ? (found.user.createdAt || 0) : 0, lastLoginAt: found && found.user ? (found.user.lastLoginAt || 0) : 0, profile: found && found.user ? publicProfile(found.user) : null }); return;
+    }
+    if (p === '/api/profile' && req.method === 'GET') {
+      const userId = requireUser(req, res); if (!userId) return;
+      const db = readUsersDb(), found = findUserById(db, userId);
+      json(res, 200, { ok: true, profile: found ? publicProfile(found.user) : null }); return;
+    }
+    if (p === '/api/profile' && (req.method === 'POST' || req.method === 'PUT')) {
+      const userId = requireUser(req, res); if (!userId) return;
+      const body = await readBody(req, 24 * 1024), profile = updateUserProfile(userId, body);
+      if (!profile) { json(res, 404, { error: 'player not found' }); return; }
+      // 已有榜单昵称/头像同步更新，但不改变成绩与名次。
+      const oldEntry = leaderboardEntryFor(userId);
+      if (oldEntry) submitLeaderboardEntry({ playerId: userId, displayName: profile.displayName, avatarUrl: profile.avatarUrl, score: oldEntry.score || 0, durationMs: oldEntry.durationMs || 0, source: oldEntry.source || 'wechat' });
+      json(res, 200, { ok: true, profile }); return;
     }
     if (req.method === 'POST' && p === '/api/save/sync') { await handleSaveSync(req, res); return; }
     if (req.method === 'GET' && p === '/api/save') {
@@ -423,8 +492,13 @@ const server = http.createServer(async (req, res) => {
       json(res, 200, { ok: true, stageId: stage, score: updateStageRecord(stage, score) }); return;
     }
 
+    if (p === '/api/leaderboard/me' && req.method === 'GET') {
+      const userId = requireUser(req, res); if (!userId) return;
+      const db = readUsersDb(), found = findUserById(db, userId);
+      json(res, 200, { ok: true, entry: leaderboardEntryFor(userId), profile: found ? publicProfile(found.user) : null }); return;
+    }
     if (p === '/api/leaderboard' && req.method === 'GET') {
-      const d = readLeaderboard(), sorted = sortedEntries(d.entries).slice(0, 200), page = Math.max(1, Number(u.searchParams.get('page')) || 1), pageSize = Math.max(5, Math.min(20, Number(u.searchParams.get('pageSize')) || 10));
+      const d = readLeaderboard(), sorted = formalSortedEntries(d.entries).slice(0, 200), page = Math.max(1, Number(u.searchParams.get('page')) || 1), pageSize = Math.max(5, Math.min(20, Number(u.searchParams.get('pageSize')) || 10));
       const pages = Math.max(1, Math.ceil(sorted.length / pageSize));
       const items = sorted.slice((page - 1) * pageSize, page * pageSize).map((x, i) => ({ rank: (page - 1) * pageSize + i + 1, username: x.displayName || x.username || '微信玩家', displayName: x.displayName || x.username || '微信玩家', avatarUrl: x.avatarUrl || '', score: x.score || 0, durationMs: x.durationMs || 0, durationText: durationText(x.durationMs) }));
       json(res, 200, { page, pages, total: sorted.length, items }); return;
@@ -432,8 +506,19 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/leaderboard/wechat' && req.method === 'POST') {
       const userId = requireUser(req, res); if (!userId) return;
       const body = await readBody(req, 32 * 1024);
-      const r = submitLeaderboardEntry({ playerId: userId, displayName: String(body.nickname || '微信玩家').trim().slice(0, 30) || '微信玩家', avatarUrl: String(body.avatarUrl || '').trim().slice(0, 800), score: Math.max(0, Math.floor(Number(body.score) || 0)), durationMs: Math.max(0, Math.floor(Number(body.durationMs) || 0)), source: 'wechat' });
-      json(res, 200, { ok: true, rank: r.rank, qualified: r.qualified }); return;
+      const rec = readSaveRecord(userId), save = rec && rec.save;
+      if (!save || !save.gameCompleted) { json(res, 409, { error: '请先完成游戏并同步云存档' }); return; }
+      if (save.debugUsed) { json(res, 403, { error: '本局使用过调试跳关，成绩不能进入英雄榜' }); return; }
+      // 正式榜单不再相信客户端传入总分：以服务器当前云存档为准。
+      const authoritative = summarizeSave(save);
+      const score = Math.max(0, Math.floor(Number(authoritative.totalScore) || 0));
+      const startedAt = Math.max(0, Number(save.runStartedAt) || 0), completedAt = Math.max(0, Number(save.gameCompletedAt) || 0);
+      let durationMs = startedAt && completedAt && completedAt >= startedAt ? completedAt - startedAt : Math.max(0, Math.floor(Number(body.durationMs) || 0));
+      durationMs = Math.min(7 * 24 * 3600 * 1000, durationMs);
+      const profile = updateUserProfile(userId, { displayName: body.nickname, avatarUrl: body.avatarUrl }) || { displayName: defaultDisplayName(userId), avatarUrl: '' };
+      submitLeaderboardEntry({ playerId: userId, displayName: profile.displayName, avatarUrl: profile.avatarUrl, score, durationMs, source: 'wechat-verified', verified: true });
+      const formal = leaderboardEntryFor(userId);
+      json(res, 200, { ok: true, rank: formal ? formal.rank : 0, qualified: !!formal, score, durationMs, verified: true }); return;
     }
     if (p === '/api/leaderboard' && req.method === 'POST') {
       const body = await readBody(req, 24 * 1024), username = String(body.username || '玩家').trim().slice(0, 30), password = String(body.password || '');
@@ -448,8 +533,8 @@ const server = http.createServer(async (req, res) => {
       const db = readUsersDb(), users = Object.values(db.usersByOpenid || {}), now = Date.now();
       let saves = 0, completed = 0;
       for (const user of users) { const rec = user && user.userId ? readSaveRecord(user.userId) : null; if (rec) { saves++; if (rec.save && rec.save.gameCompleted) completed++; } }
-      const lb = readLeaderboard();
-      json(res, 200, { users: users.length, saves, completed, active7d: users.filter((x) => now - Number(x.lastLoginAt || 0) <= 7 * 86400000).length, leaderboard: Math.min(200, lb.entries.length), version: VERSION }); return;
+      const lb = readLeaderboard(), formalCount = Math.min(200, formalSortedEntries(lb.entries).length);
+      json(res, 200, { users: users.length, saves, completed, active7d: users.filter((x) => now - Number(x.lastLoginAt || 0) <= 7 * 86400000).length, leaderboard: formalCount, version: VERSION }); return;
     }
     if (p === '/api/admin/players' && req.method === 'GET') { if (!requireAdmin(req, res)) return; json(res, 200, adminPlayers(Object.fromEntries(u.searchParams.entries()))); return; }
     if (p === '/api/admin/player' && req.method === 'GET') {
@@ -458,7 +543,7 @@ const server = http.createServer(async (req, res) => {
       const db = readUsersDb(), found = findUserById(db, userId);
       if (!found) { json(res, 404, { error: 'player not found' }); return; }
       const rec = readSaveRecord(userId);
-      json(res, 200, { user: { userId: found.user.userId, createdAt: found.user.createdAt || 0, lastLoginAt: found.user.lastLoginAt || 0, appVersion: found.user.appVersion || '', lastDeviceId: found.user.lastDeviceId || '', lastSaveAt: found.user.lastSaveAt || 0 }, progress: summarizeSave(rec && rec.save), save: rec ? rec.save : null, serverUpdatedAt: rec ? rec.serverUpdatedAt : 0 }); return;
+      json(res, 200, { user: { userId: found.user.userId, displayName: publicProfile(found.user).displayName, avatarUrl: publicProfile(found.user).avatarUrl, createdAt: found.user.createdAt || 0, lastLoginAt: found.user.lastLoginAt || 0, appVersion: found.user.appVersion || '', lastDeviceId: found.user.lastDeviceId || '', lastSaveAt: found.user.lastSaveAt || 0 }, progress: summarizeSave(rec && rec.save), leaderboard: leaderboardEntryFor(userId), save: rec ? rec.save : null, serverUpdatedAt: rec ? rec.serverUpdatedAt : 0 }); return;
     }
     if (p === '/api/admin/config' && req.method === 'GET') { if (!requireAdmin(req, res)) return; json(res, 200, readRuntimeConfig()); return; }
     if (p === '/api/admin/config' && (req.method === 'PUT' || req.method === 'POST')) { if (!requireAdmin(req, res)) return; json(res, 200, writeRuntimeConfig(await readBody(req, 24 * 1024))); return; }
@@ -466,6 +551,12 @@ const server = http.createServer(async (req, res) => {
       if (!requireAdmin(req, res)) return;
       const sorted = sortedEntries(readLeaderboard().entries).slice(0, 200).map((x, i) => Object.assign({ rank: i + 1, durationText: durationText(x.durationMs) }, x));
       json(res, 200, { items: sorted, total: sorted.length }); return;
+    }
+    if (p === '/api/admin/leaderboard/remove' && req.method === 'POST') {
+      if (!requireAdmin(req, res)) return;
+      const body = await readBody(req, 12 * 1024), userId = String(body.userId || '').trim();
+      if (!userId) { json(res, 400, { error: 'userId is required' }); return; }
+      json(res, 200, { ok: true, removed: removeLeaderboardEntry(userId) }); return;
     }
 
     json(res, 404, { error: 'not found' });

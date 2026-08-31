@@ -1,0 +1,20 @@
+坡南寻宝记独立后端 v5.35.0
+
+新增：
+- GET /api/profile
+- PUT /api/profile
+- GET /api/leaderboard/me
+- 正式英雄榜服务器核验机制
+- 玩家昵称/头像持久化
+- 管理后台玩家昵称显示、英雄榜异常成绩移除
+
+正式英雄榜规则：
+- 必须登录微信玩家身份
+- 必须已有服务器云存档且 gameCompleted=true
+- debugUsed=true 拒绝上榜
+- score 由服务器根据云存档重新计算
+- duration 优先使用 runStartedAt → gameCompletedAt
+- 公共正式榜只展示 verified=true / source=wechat-verified 的成绩
+- 旧未核验成绩不会影响正式榜排名
+
+数据目录和现有 Volume 不变，不需要新建硬盘。
