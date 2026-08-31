@@ -1,0 +1,6 @@
+wx-pnxbj 后端 v5.34.2
+
+- /health 版本更新为 5.34.2。
+- 新增 GET /api/auth/me。
+- 用户 token 必须同时满足签名有效、未过期、user_id 存在于当前玩家库。
+- 用于阻断旧 Service / 旧 Volume 产生的孤儿 token。

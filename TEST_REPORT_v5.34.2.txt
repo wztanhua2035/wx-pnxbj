@@ -1,0 +1,7 @@
+wx-pnxbj v5.34.2 后端检查
+
+- server.js Node 语法检查通过。
+- /health 本地 smoke test 通过。
+- /api/auth/me：签名正确但当前 users.json 不存在 user_id -> 401。
+- /api/auth/me：当前 users.json 存在 user_id -> 200。
+- 保持现有 /data 目录与环境变量兼容，不改 Volume。

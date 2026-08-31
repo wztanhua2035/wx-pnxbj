@@ -20,7 +20,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const VERSION = '5.34.0';
+const VERSION = '5.34.2';
 const PORT = Number(process.env.PORT || 3000);
 const APPID = String(process.env.WECHAT_APPID || '').trim();
 const APPSECRET = String(process.env.WECHAT_APPSECRET || '').trim();
@@ -172,7 +172,12 @@ function bearer(req) {
 function requireUser(req, res) {
   const p = verifyToken(bearer(req), 'user');
   if (!p) { json(res, 401, { error: 'login required' }); return null; }
-  return String(p.sub);
+  const userId = String(p.sub);
+  // v5.34.2：签名正确还不够；user_id 必须确实存在于当前 Volume 的玩家库。
+  // 这样切换 Service / Volume 后，旧服务留下的孤儿 token 会被拒绝并触发客户端重新 wx.login。
+  const db = readUsersDb();
+  if (!findUserById(db, userId)) { json(res, 401, { error: 'login required' }); return null; }
+  return userId;
 }
 function requireAdmin(req, res) {
   const p = verifyToken(bearer(req), 'admin');
@@ -396,6 +401,11 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'GET' && (p === '/admin' || p === '/admin/')) { serveAdmin(res); return; }
     if (req.method === 'POST' && p === '/api/auth/wechat-login') { await handleLogin(req, res); return; }
+    if (req.method === 'GET' && p === '/api/auth/me') {
+      const userId = requireUser(req, res); if (!userId) return;
+      const db = readUsersDb(), found = findUserById(db, userId);
+      json(res, 200, { ok: true, userId, createdAt: found && found.user ? (found.user.createdAt || 0) : 0, lastLoginAt: found && found.user ? (found.user.lastLoginAt || 0) : 0 }); return;
+    }
     if (req.method === 'POST' && p === '/api/save/sync') { await handleSaveSync(req, res); return; }
     if (req.method === 'GET' && p === '/api/save') {
       const userId = requireUser(req, res); if (!userId) return;
