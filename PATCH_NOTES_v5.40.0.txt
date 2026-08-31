@@ -1,0 +1,6 @@
+wx-pnxbj v5.40.0
+- 运行配置新增 debugModeEnabled，默认 true。
+- 独立管理后台新增“调试模式（默认开）”开关。
+- 保留 debugScoresEnabled“调试模式记录成绩（默认关）”开关，两者互不影响。
+- /api/config 与 /api/admin/config 均支持 debugModeEnabled。
+- 后端版本号升级到 5.40.0。

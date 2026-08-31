@@ -1,0 +1,16 @@
+坡南寻宝记 wx-pnxbj 后端 v5.40.0 部署说明
+
+1. 解压 GitHub 根目录覆盖包。
+2. 覆盖 wx-pnxbj 仓库根目录中的 server.js、package.json、public/admin/index.html 等文件。
+3. 提交并推送 GitHub，等待 Zeabur 自动部署。
+4. 不需要修改现有环境变量，不需要重建 /data Volume。
+5. 部署完成访问：
+   https://wxpnxbj.wzpy.net/health
+   应返回 version: 5.40.0。
+6. 打开：
+   https://wxpnxbj.wzpy.net/admin
+   → 运行配置
+   应看到两个独立开关：
+   - 调试模式（默认开）
+   - 调试模式记录成绩（默认关）
+7. 保存“调试模式”后，小游戏客户端下一次读取 /api/config 时生效。

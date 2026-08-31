@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * 坡南寻宝记 v5.37.0 微信小游戏独立后端
+ * 坡南寻宝记 v5.40.0 微信小游戏独立后端
  * Node.js 18+，无第三方依赖。
  *
  * 环境变量：
@@ -20,7 +20,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const VERSION = '5.37.0';
+const VERSION = '5.40.0';
 const PORT = Number(process.env.PORT || 3000);
 const APPID = String(process.env.WECHAT_APPID || '').trim();
 const APPSECRET = String(process.env.WECHAT_APPSECRET || '').trim();
@@ -325,7 +325,7 @@ async function handleSaveSync(req, res) {
 }
 
 function defaultRuntimeConfig() {
-  return { maintenanceMode: false, bgmVolume: 55, sfxVolume: 100, bgmUrl: '', debugScoresEnabled: false };
+  return { maintenanceMode: false, bgmVolume: 55, sfxVolume: 100, bgmUrl: '', debugModeEnabled: true, debugScoresEnabled: false };
 }
 function readRuntimeConfig() {
   ensureJson(CONFIG_FILE, defaultRuntimeConfig);
@@ -337,6 +337,7 @@ function writeRuntimeConfig(input) {
   if (input.bgmVolume != null) current.bgmVolume = Math.max(0, Math.min(100, Math.round(Number(input.bgmVolume) || 0)));
   if (input.sfxVolume != null) current.sfxVolume = Math.max(0, Math.min(100, Math.round(Number(input.sfxVolume) || 0)));
   if (input.bgmUrl != null) current.bgmUrl = String(input.bgmUrl || '').trim().slice(0, 500);
+  if (input.debugModeEnabled != null) current.debugModeEnabled = !!input.debugModeEnabled;
   if (input.debugScoresEnabled != null) current.debugScoresEnabled = !!input.debugScoresEnabled;
   atomicWrite(CONFIG_FILE, current);
   return current;
