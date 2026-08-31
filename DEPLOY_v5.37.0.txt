@@ -1,0 +1,20 @@
+wx-pnxbj v5.37.0 Zeabur 升级步骤
+
+1. 解压“GitHub根目录覆盖包”。
+2. 用其中内容覆盖 GitHub 仓库 wztanhua2035/wx-pnxbj 根目录对应文件。
+3. Commit / Push。
+4. 等待 Zeabur GitHub Service 自动部署。
+5. 打开 https://wxpnxbj.wzpy.net/health
+   应看到 version: "5.37.0"。
+6. 打开 https://wxpnxbj.wzpy.net/admin
+   在“运行配置”中可看到“调试模式记录成绩（默认关）”。
+7. 默认保持关闭；只有测试阶段确实希望调试跳关成绩进入榜单时才开启。
+
+无需修改：
+- WECHAT_APPID
+- WECHAT_APPSECRET
+- AUTH_TOKEN_SECRET
+- PASSWORD
+- USER_DB_FILE
+- /data Volume
+- wxpnxbj.wzpy.net 域名

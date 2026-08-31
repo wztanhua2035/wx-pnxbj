@@ -1,0 +1,12 @@
+wx-pnxbj 后端 v5.37.0 更新说明
+
+1. 运行配置新增 debugScoresEnabled，默认 false。
+2. /api/admin/config GET/PUT 支持“调试模式记录成绩”。
+3. 正式微信英雄榜提交时：
+   - debugUsed=true 且开关关闭 -> 403，拒绝进入正式榜。
+   - debugUsed=true 且开关开启 -> 允许提交，但服务器仍以云存档计算权威总分和通关时间，并记录 debugUsed=true/source=wechat-debug-allowed。
+4. 管理后台运行配置新增对应开关。
+5. 管理后台英雄榜对调试成绩显示“调试”标记。
+6. /health 版本更新为 5.37.0。
+
+部署：覆盖 GitHub 仓库根目录并提交，等待 Zeabur 自动部署；无需修改现有环境变量和 /data Volume。

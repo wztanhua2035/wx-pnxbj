@@ -1,0 +1,13 @@
+wx-pnxbj v5.37.0 后端检查报告
+日期：2026-08-31
+
+检查结果：通过
+
+- server.js 通过 node --check。
+- package.json 可正常解析。
+- 管理后台内嵌 JavaScript 已提取并通过 node --check。
+- 本地临时端口启动测试通过：/health 返回 version=5.37.0。
+- 管理员登录接口测试通过。
+- 运行配置默认 debugScoresEnabled=false。
+- 管理后台 PUT 设置 debugScoresEnabled=true 后读回为 true。
+- 不修改现有 USER_DB_FILE 和 /data 数据结构。

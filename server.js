@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * 坡南寻宝记 v5.35.0 微信小游戏独立后端
+ * 坡南寻宝记 v5.37.0 微信小游戏独立后端
  * Node.js 18+，无第三方依赖。
  *
  * 环境变量：
@@ -20,7 +20,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const VERSION = '5.35.0';
+const VERSION = '5.37.0';
 const PORT = Number(process.env.PORT || 3000);
 const APPID = String(process.env.WECHAT_APPID || '').trim();
 const APPSECRET = String(process.env.WECHAT_APPSECRET || '').trim();
@@ -325,7 +325,7 @@ async function handleSaveSync(req, res) {
 }
 
 function defaultRuntimeConfig() {
-  return { maintenanceMode: false, bgmVolume: 55, sfxVolume: 100, bgmUrl: '' };
+  return { maintenanceMode: false, bgmVolume: 55, sfxVolume: 100, bgmUrl: '', debugScoresEnabled: false };
 }
 function readRuntimeConfig() {
   ensureJson(CONFIG_FILE, defaultRuntimeConfig);
@@ -337,6 +337,7 @@ function writeRuntimeConfig(input) {
   if (input.bgmVolume != null) current.bgmVolume = Math.max(0, Math.min(100, Math.round(Number(input.bgmVolume) || 0)));
   if (input.sfxVolume != null) current.sfxVolume = Math.max(0, Math.min(100, Math.round(Number(input.sfxVolume) || 0)));
   if (input.bgmUrl != null) current.bgmUrl = String(input.bgmUrl || '').trim().slice(0, 500);
+  if (input.debugScoresEnabled != null) current.debugScoresEnabled = !!input.debugScoresEnabled;
   atomicWrite(CONFIG_FILE, current);
   return current;
 }
@@ -508,7 +509,8 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req, 32 * 1024);
       const rec = readSaveRecord(userId), save = rec && rec.save;
       if (!save || !save.gameCompleted) { json(res, 409, { error: '请先完成游戏并同步云存档' }); return; }
-      if (save.debugUsed) { json(res, 403, { error: '本局使用过调试跳关，成绩不能进入英雄榜' }); return; }
+      const runtimeCfg = readRuntimeConfig();
+      if (save.debugUsed && !runtimeCfg.debugScoresEnabled) { json(res, 403, { error: '本局使用过调试跳关，且后台未开启“调试模式记录成绩”' }); return; }
       // 正式榜单不再相信客户端传入总分：以服务器当前云存档为准。
       const authoritative = summarizeSave(save);
       const score = Math.max(0, Math.floor(Number(authoritative.totalScore) || 0));
@@ -516,9 +518,10 @@ const server = http.createServer(async (req, res) => {
       let durationMs = startedAt && completedAt && completedAt >= startedAt ? completedAt - startedAt : Math.max(0, Math.floor(Number(body.durationMs) || 0));
       durationMs = Math.min(7 * 24 * 3600 * 1000, durationMs);
       const profile = updateUserProfile(userId, { displayName: body.nickname, avatarUrl: body.avatarUrl }) || { displayName: defaultDisplayName(userId), avatarUrl: '' };
-      submitLeaderboardEntry({ playerId: userId, displayName: profile.displayName, avatarUrl: profile.avatarUrl, score, durationMs, source: 'wechat-verified', verified: true });
+      const debugAccepted = !!save.debugUsed;
+      submitLeaderboardEntry({ playerId: userId, displayName: profile.displayName, avatarUrl: profile.avatarUrl, score, durationMs, source: debugAccepted ? 'wechat-debug-allowed' : 'wechat-verified', verified: true, debugUsed: debugAccepted });
       const formal = leaderboardEntryFor(userId);
-      json(res, 200, { ok: true, rank: formal ? formal.rank : 0, qualified: !!formal, score, durationMs, verified: true }); return;
+      json(res, 200, { ok: true, rank: formal ? formal.rank : 0, qualified: !!formal, score, durationMs, verified: true, debugUsed: debugAccepted, debugScoresEnabled: !!runtimeCfg.debugScoresEnabled }); return;
     }
     if (p === '/api/leaderboard' && req.method === 'POST') {
       const body = await readBody(req, 24 * 1024), username = String(body.username || '玩家').trim().slice(0, 30), password = String(body.password || '');
