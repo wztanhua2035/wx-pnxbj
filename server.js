@@ -20,7 +20,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const VERSION = '5.40.0';
+const VERSION = '5.48.0';
 const PORT = Number(process.env.PORT || 3000);
 const APPID = String(process.env.WECHAT_APPID || '').trim();
 const APPSECRET = String(process.env.WECHAT_APPSECRET || '').trim();
@@ -224,8 +224,14 @@ function updateUserProfile(userId, input) {
   const db = readUsersDb(), found = findUserById(db, userId);
   if (!found) return null;
   const body = input || {};
-  found.user.displayName = cleanDisplayName(body.displayName != null ? body.displayName : body.nickname, userId);
-  if (body.avatarUrl != null) found.user.avatarUrl = cleanAvatarUrl(body.avatarUrl);
+  const rawName = String(body.displayName != null ? body.displayName : (body.nickname != null ? body.nickname : '')).trim();
+  const genericName = !rawName || rawName === '微信用户' || rawName === '微信玩家';
+  if (!genericName) found.user.displayName = cleanDisplayName(rawName, userId);
+  else if (!found.user.displayName) found.user.displayName = defaultDisplayName(userId);
+  if (body.avatarUrl != null) {
+    const avatar = cleanAvatarUrl(body.avatarUrl);
+    if (avatar) found.user.avatarUrl = avatar;
+  }
   found.user.profileUpdatedAt = Date.now();
   writeUsersDb(db);
   return publicProfile(found.user);
@@ -325,7 +331,7 @@ async function handleSaveSync(req, res) {
 }
 
 function defaultRuntimeConfig() {
-  return { maintenanceMode: false, bgmVolume: 55, sfxVolume: 100, bgmUrl: '', debugModeEnabled: true, debugScoresEnabled: false };
+  return { maintenanceMode: false, bgmVolume: 55, sfxVolume: 100, bgmUrl: '', debugModeEnabled: true, debugScoresEnabled: false, debugEntryCode: '9999' };
 }
 function readRuntimeConfig() {
   ensureJson(CONFIG_FILE, defaultRuntimeConfig);
@@ -339,8 +345,24 @@ function writeRuntimeConfig(input) {
   if (input.bgmUrl != null) current.bgmUrl = String(input.bgmUrl || '').trim().slice(0, 500);
   if (input.debugModeEnabled != null) current.debugModeEnabled = !!input.debugModeEnabled;
   if (input.debugScoresEnabled != null) current.debugScoresEnabled = !!input.debugScoresEnabled;
+  if (input.debugEntryCode != null) { const code = String(input.debugEntryCode || '').trim(); if (/^\d{4}$/.test(code)) current.debugEntryCode = code; }
   atomicWrite(CONFIG_FILE, current);
   return current;
+}
+function publicRuntimeConfig() {
+  const c = readRuntimeConfig();
+  const out = Object.assign({}, c);
+  delete out.debugEntryCode;
+  return out;
+}
+
+const DEBUG_ATTEMPTS = new Map();
+function debugClientKey(req) { return String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim().slice(0,80); }
+function allowDebugAttempt(req) {
+  const key = debugClientKey(req), now = Date.now(), rec = DEBUG_ATTEMPTS.get(key) || { n:0, at:now };
+  if (now - rec.at > 10*60*1000) { rec.n=0; rec.at=now; }
+  rec.n++; DEBUG_ATTEMPTS.set(key, rec);
+  return rec.n <= 12;
 }
 
 function incrementVisit() {
@@ -483,7 +505,13 @@ const server = http.createServer(async (req, res) => {
       const rec = readSaveRecord(userId); json(res, 200, { ok: true, save: rec ? rec.save : null, serverUpdatedAt: rec ? rec.serverUpdatedAt : 0 }); return;
     }
 
-    if (req.method === 'GET' && p === '/api/config') { json(res, 200, readRuntimeConfig()); return; }
+    if (req.method === 'GET' && p === '/api/config') { json(res, 200, publicRuntimeConfig()); return; }
+    if (req.method === 'POST' && p === '/api/debug/verify') {
+      if (!allowDebugAttempt(req)) { json(res, 429, { error: 'too many attempts' }); return; }
+      const body = await readBody(req, 8 * 1024), code = String(body.code || '').trim(), cfg = readRuntimeConfig();
+      const ok = /^\d{4}$/.test(code) && safeEqual(code, String(cfg.debugEntryCode || '9999'));
+      json(res, 200, { ok: true, forceDebug: !!ok }); return;
+    }
     if (req.method === 'POST' && p === '/api/visit-counter') { json(res, 200, { count: incrementVisit() }); return; }
     if (p === '/api/stage-records' && req.method === 'GET') {
       const stage = Math.max(1, Math.min(19, Number(u.searchParams.get('stage')) || 1));

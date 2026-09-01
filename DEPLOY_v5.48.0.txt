@@ -1,0 +1,11 @@
+wx-pnxbj v5.48.0 部署步骤
+
+1. 将本覆盖包解压，覆盖 GitHub 仓库 wx-pnxbj 根目录。
+2. 提交并等待 Zeabur 自动部署。
+3. 不修改现有环境变量：WECHAT_APPID / WECHAT_APPSECRET / AUTH_TOKEN_SECRET / PASSWORD / USER_DB_FILE。
+4. 不更换 /data Volume。
+5. 部署后访问：https://wxpnxbj.wzpy.net/health
+   应看到 version = 5.48.0。
+6. 打开 https://wxpnxbj.wzpy.net/admin → 运行配置。
+7. 可看到“URL强制调试口令（四位数字）”，默认9999；可改成任意四位数字保存。
+8. 建议体验版阶段把普通“调试模式”保持关闭，只在需要时通过启动 query ?ts=四位口令进入调试。
