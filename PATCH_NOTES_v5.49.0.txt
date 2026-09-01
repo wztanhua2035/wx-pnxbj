@@ -1,0 +1,11 @@
+wx-pnxbj 后端 v5.49.0
+
+本次修改：
+1. 英雄榜同一 playerId 只保留一条最优成绩。
+2. 最优规则：总分更高优先；总分相同时，用时更短优先。
+3. 若玩家后续成绩没有超过历史最好成绩，不覆盖原最佳分数和用时，仅允许刷新昵称/头像。
+4. 后端读取历史 leaderboard/entries.json 时，会自动合并重复 playerId，保留最优记录。
+5. 正式成绩提交响应增加 bestOnly / improved / attemptScore / attemptDurationMs 字段，客户端仍兼容旧字段。
+
+部署方式：将覆盖包内容放到 wx-pnxbj GitHub 仓库根目录后提交，等待 Zeabur 自动部署。
+部署后访问 /health，应显示 version: 5.49.0。

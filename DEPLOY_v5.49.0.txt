@@ -1,0 +1,11 @@
+《坡南寻宝记》微信小游戏后端 v5.49.0 部署步骤
+
+1. 解压 wx-pnxbj_v5.49.0_英雄榜最优成绩_GitHub根目录覆盖包.zip。
+2. 将包内文件覆盖到 GitHub 仓库 wx-pnxbj 根目录。
+3. Commit / Push。
+4. 等待 Zeabur 自动重新部署。
+5. 打开 https://wxpnxbj.wzpy.net/health。
+6. 确认 version 为 5.49.0。
+7. 打开管理后台英雄榜检查已有数据；若历史文件里同一 playerId 有重复记录，首次读取时会自动合并为最优记录。
+
+本次不需要增加新的环境变量，也不需要修改 /data Volume。

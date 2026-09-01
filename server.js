@@ -20,7 +20,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const VERSION = '5.48.0';
+const VERSION = '5.49.0';
 const PORT = Number(process.env.PORT || 3000);
 const APPID = String(process.env.WECHAT_APPID || '').trim();
 const APPSECRET = String(process.env.WECHAT_APPSECRET || '').trim();
@@ -378,13 +378,52 @@ function updateStageRecord(stageId, score) {
   return Math.max(prev, score);
 }
 
-function readLeaderboard() { ensureJson(LEADERBOARD_FILE, { entries: [] }); const d = readJson(LEADERBOARD_FILE, { entries: [] }); if (!Array.isArray(d.entries)) d.entries = []; return d; }
+function isBetterLeaderboardScore(a, b) {
+  if (!b) return true;
+  const as = Math.max(0, Number(a && a.score) || 0), bs = Math.max(0, Number(b && b.score) || 0);
+  if (as !== bs) return as > bs;
+  const ad = Math.max(0, Number(a && a.durationMs) || 0) || 9e15, bd = Math.max(0, Number(b && b.durationMs) || 0) || 9e15;
+  return ad < bd;
+}
+function dedupeLeaderboardEntries(entries) {
+  const map = new Map();
+  for (const raw of Array.isArray(entries) ? entries : []) {
+    if (!raw) continue;
+    const id = String(raw.playerId || '').trim();
+    if (!id) continue;
+    const item = Object.assign({}, raw, { playerId: id, score: Math.max(0, Math.floor(Number(raw.score) || 0)), durationMs: Math.max(0, Math.floor(Number(raw.durationMs) || 0)) });
+    const old = map.get(id);
+    if (!old) { map.set(id, item); continue; }
+    const newer = Number(item.updatedAt || item.createdAt || 0) >= Number(old.updatedAt || old.createdAt || 0) ? item : old;
+    const winner = isBetterLeaderboardScore(item, old) ? item : old;
+    const merged = Object.assign({}, winner);
+    // 成绩只保留最优；昵称头像允许使用同一玩家最近一次提交的资料刷新。
+    if (newer.displayName) merged.displayName = newer.displayName;
+    if (newer.avatarUrl) merged.avatarUrl = newer.avatarUrl;
+    merged.verified = old.verified === true || item.verified === true;
+    if (winner.source) merged.source = winner.source;
+    merged.createdAt = Math.min(Number(old.createdAt || Date.now()), Number(item.createdAt || Date.now()));
+    merged.updatedAt = Math.max(Number(old.updatedAt || 0), Number(item.updatedAt || 0));
+    map.set(id, merged);
+  }
+  return Array.from(map.values());
+}
+function readLeaderboard() {
+  ensureJson(LEADERBOARD_FILE, { entries: [] });
+  const d = readJson(LEADERBOARD_FILE, { entries: [] });
+  if (!Array.isArray(d.entries)) d.entries = [];
+  const before = d.entries.length, deduped = dedupeLeaderboardEntries(d.entries);
+  d.entries = deduped;
+  // v5.49.0：发现历史重复 playerId 时自动归并为该玩家最优成绩。
+  if (deduped.length !== before) { d.updatedAt = Date.now(); atomicWrite(LEADERBOARD_FILE, d); }
+  return d;
+}
 function durationText(ms) {
   const sec = Math.max(0, Math.floor(Number(ms) || 0) / 1000), m = Math.floor(sec / 60), s = sec % 60;
   return m ? `${m}:${String(s).padStart(2, '0')}` : `${s}s`;
 }
 function sortedEntries(entries) {
-  return entries.slice().sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0) || (Number(a.durationMs) || 9e15) - (Number(b.durationMs) || 9e15) || (Number(a.updatedAt) || 0) - (Number(b.updatedAt) || 0));
+  return dedupeLeaderboardEntries(entries).sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0) || (Number(a.durationMs) || 9e15) - (Number(b.durationMs) || 9e15) || (Number(a.updatedAt) || 0) - (Number(b.updatedAt) || 0));
 }
 function formalSortedEntries(entries) {
   return sortedEntries((entries || []).filter((x) => x && (x.verified === true || x.source === 'wechat-verified')));
@@ -393,21 +432,24 @@ function submitLeaderboardEntry(entry) {
   const d = readLeaderboard(), id = String(entry.playerId || '').trim();
   let old = d.entries.find((x) => String(x.playerId) === id);
   const promoteVerified = !!(old && entry.verified === true && old.verified !== true);
-  const better = !old || promoteVerified || Number(entry.score) > Number(old.score) || (Number(entry.score) === Number(old.score) && Number(entry.durationMs) < Number(old.durationMs || 9e15));
+  const scoreBetter = !old || isBetterLeaderboardScore(entry, old);
+  const better = !old || promoteVerified || scoreBetter;
   if (better) {
-    if (old) Object.assign(old, entry, { updatedAt: Date.now() });
-    else d.entries.push(Object.assign({}, entry, { createdAt: Date.now(), updatedAt: Date.now() }));
+    if (old) {
+      // 若只是从历史未核验记录升级到正式记录，成绩仍以本次服务器核验值为准；
+      // 正式记录建立后，后续只接受更高分，平分时只接受更短用时。
+      Object.assign(old, entry, { updatedAt: Date.now() });
+    } else d.entries.push(Object.assign({}, entry, { createdAt: Date.now(), updatedAt: Date.now() }));
   } else if (old && (entry.displayName || entry.avatarUrl)) {
     if (entry.displayName) old.displayName = entry.displayName;
     if (entry.avatarUrl) old.avatarUrl = entry.avatarUrl;
     old.updatedAt = Date.now();
   }
-  const sorted = sortedEntries(d.entries), idx = sorted.findIndex((x) => String(x.playerId) === id), rank = idx >= 0 ? idx + 1 : 0;
-  // 正式榜只展示 verified 成绩；底层最多保留 500 条以兼容历史测试/旧接口。
-  d.entries = sorted.slice(0, 500);
+  d.entries = sortedEntries(d.entries).slice(0, 500);
   atomicWrite(LEADERBOARD_FILE, d);
   const finalIdx = d.entries.findIndex((x) => String(x.playerId) === id);
-  return { rank: finalIdx >= 0 ? finalIdx + 1 : rank, qualified: finalIdx >= 0, entry: finalIdx >= 0 ? d.entries[finalIdx] : null };
+  const finalEntry = finalIdx >= 0 ? d.entries[finalIdx] : null;
+  return { rank: finalIdx >= 0 ? finalIdx + 1 : 0, qualified: !!finalEntry, entry: finalEntry, improved: !!scoreBetter };
 }
 
 function removeLeaderboardEntry(userId) {
@@ -548,9 +590,9 @@ const server = http.createServer(async (req, res) => {
       durationMs = Math.min(7 * 24 * 3600 * 1000, durationMs);
       const profile = updateUserProfile(userId, { displayName: body.nickname, avatarUrl: body.avatarUrl }) || { displayName: defaultDisplayName(userId), avatarUrl: '' };
       const debugAccepted = !!save.debugUsed;
-      submitLeaderboardEntry({ playerId: userId, displayName: profile.displayName, avatarUrl: profile.avatarUrl, score, durationMs, source: debugAccepted ? 'wechat-debug-allowed' : 'wechat-verified', verified: true, debugUsed: debugAccepted });
+      const submitted = submitLeaderboardEntry({ playerId: userId, displayName: profile.displayName, avatarUrl: profile.avatarUrl, score, durationMs, source: debugAccepted ? 'wechat-debug-allowed' : 'wechat-verified', verified: true, debugUsed: debugAccepted });
       const formal = leaderboardEntryFor(userId);
-      json(res, 200, { ok: true, rank: formal ? formal.rank : 0, qualified: !!formal, score, durationMs, verified: true, debugUsed: debugAccepted, debugScoresEnabled: !!runtimeCfg.debugScoresEnabled }); return;
+      json(res, 200, { ok: true, rank: formal ? formal.rank : 0, qualified: !!formal, score: formal ? formal.score : score, durationMs: formal ? formal.durationMs : durationMs, attemptScore: score, attemptDurationMs: durationMs, improved: !!submitted.improved, bestOnly: true, verified: true, debugUsed: debugAccepted, debugScoresEnabled: !!runtimeCfg.debugScoresEnabled }); return;
     }
     if (p === '/api/leaderboard' && req.method === 'POST') {
       const body = await readBody(req, 24 * 1024), username = String(body.username || '玩家').trim().slice(0, 30), password = String(body.password || '');
