@@ -1,0 +1,15 @@
+《坡南寻宝记》后台 v5.50.0 部署步骤
+
+1. 先保留Zeabur现有 /data Volume，不要删除或新建替换。
+2. 解压“wx-pnxbj_v5.50.0_通关抽奖与兑奖核销_GitHub根目录覆盖包.zip”。
+3. 将包内文件覆盖到GitHub仓库 wx-pnxbj 根目录并提交、推送。
+4. 等待Zeabur自动重新部署，不需要新增环境变量。
+5. 打开 https://wxpnxbj.wzpy.net/health，确认 version 为 5.50.0。
+6. 打开 https://wxpnxbj.wzpy.net/admin/lottery，使用原管理后台密码登录。
+7. 先配置奖项、库存、概率和规则，确认概率合计不超过100%，最后再开启抽奖开关。
+8. 上传前端 v5.55.0 后，用体验版真机完成一次通关，分别验证普通评价1次和S级2次抽奖。
+
+新增持久化文件会自动写入现有Volume：
+- /data/lottery/config.json
+- /data/lottery/state.json
+

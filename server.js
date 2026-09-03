@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * 坡南寻宝记 v5.40.0 微信小游戏独立后端
+ * 坡南寻宝记 v5.50.0 微信小游戏独立后端
  * Node.js 18+，无第三方依赖。
  *
  * 环境变量：
@@ -20,7 +20,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const VERSION = '5.49.0';
+const VERSION = '5.50.0';
 const PORT = Number(process.env.PORT || 3000);
 const APPID = String(process.env.WECHAT_APPID || '').trim();
 const APPSECRET = String(process.env.WECHAT_APPSECRET || '').trim();
@@ -35,6 +35,8 @@ const VISIT_FILE = path.join(DATA_DIR, 'stats', 'visits.json');
 const STAGE_FILE = path.join(DATA_DIR, 'stats', 'stage-records.json');
 const LEADERBOARD_FILE = path.join(DATA_DIR, 'leaderboard', 'entries.json');
 const ADMIN_HTML = path.join(__dirname, 'public', 'admin', 'index.html');
+const LOTTERY_ADMIN_HTML = path.join(__dirname, 'public', 'admin', 'lottery.html');
+const lottery = require('./lottery')(DATA_DIR);
 
 function json(res, status, body) {
   const data = Buffer.from(JSON.stringify(body));
@@ -353,6 +355,7 @@ function publicRuntimeConfig() {
   const c = readRuntimeConfig();
   const out = Object.assign({}, c);
   delete out.debugEntryCode;
+  out.lotteryEnabled = !!lottery.publicConfig().enabled;
   return out;
 }
 
@@ -508,8 +511,17 @@ function adminPlayers(query) {
 }
 
 function serveAdmin(res) {
-  try { text(res, 200, fs.readFileSync(ADMIN_HTML, 'utf8'), 'text/html; charset=utf-8'); }
+  try {
+    let html=fs.readFileSync(ADMIN_HTML, 'utf8');
+    const lotteryLink='<a href="/admin/lottery" style="position:fixed;right:18px;bottom:18px;z-index:9999;padding:11px 16px;border-radius:12px;background:#a66b25;color:#fff;text-decoration:none;font-weight:700;box-shadow:0 6px 18px rgba(0,0,0,.22)">抽奖管理</a>';
+    html=/<\/body>/i.test(html)?html.replace(/<\/body>/i,lotteryLink+'</body>'):html+lotteryLink;
+    text(res, 200, html, 'text/html; charset=utf-8');
+  }
   catch (e) { text(res, 500, 'admin page missing'); }
+}
+function serveLotteryAdmin(res) {
+  try { text(res, 200, fs.readFileSync(LOTTERY_ADMIN_HTML, 'utf8'), 'text/html; charset=utf-8'); }
+  catch (e) { text(res, 500, 'lottery admin page missing'); }
 }
 
 const server = http.createServer(async (req, res) => {
@@ -521,6 +533,7 @@ const server = http.createServer(async (req, res) => {
       json(res, 200, { ok: true, service: 'ponan-wechat-minigame', version: VERSION, authConfigured: !!(APPID && APPSECRET && TOKEN_SECRET.length >= 24), adminConfigured: !!ADMIN_PASSWORD }); return;
     }
     if (req.method === 'GET' && (p === '/admin' || p === '/admin/')) { serveAdmin(res); return; }
+    if (req.method === 'GET' && (p === '/admin/lottery' || p === '/admin/lottery/')) { serveLotteryAdmin(res); return; }
     if (req.method === 'POST' && p === '/api/auth/wechat-login') { await handleLogin(req, res); return; }
     if (req.method === 'GET' && p === '/api/auth/me') {
       const userId = requireUser(req, res); if (!userId) return;
@@ -548,6 +561,22 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && p === '/api/config') { json(res, 200, publicRuntimeConfig()); return; }
+    if (req.method === 'GET' && p === '/api/lottery/config') { json(res, 200, lottery.publicConfig()); return; }
+    if (req.method === 'GET' && p === '/api/lottery/status') {
+      const userId = requireUser(req, res); if (!userId) return;
+      const db = readUsersDb(), found = findUserById(db, userId), rec = readSaveRecord(userId), cfg = readRuntimeConfig();
+      json(res, 200, lottery.status({ userId, profile: found ? publicProfile(found.user) : null, save: rec && rec.save, debugMode: !!cfg.debugModeEnabled })); return;
+    }
+    if (req.method === 'POST' && p === '/api/lottery/draw') {
+      const userId = requireUser(req, res); if (!userId) return;
+      const body = await readBody(req, 12 * 1024), db = readUsersDb(), found = findUserById(db, userId), rec = readSaveRecord(userId), cfg = readRuntimeConfig();
+      json(res, 200, lottery.draw({ userId, profile: found ? publicProfile(found.user) : null, save: rec && rec.save, debugMode: !!cfg.debugModeEnabled, debug: !!body.debug })); return;
+    }
+    if (req.method === 'POST' && p === '/api/lottery/debug-clear') {
+      const userId = requireUser(req, res); if (!userId) return;
+      const cfg = readRuntimeConfig();if (!cfg.debugModeEnabled) { json(res, 403, { error: '调试功能未开启' }); return; }
+      json(res, 200, lottery.clearDebug(userId)); return;
+    }
     if (req.method === 'POST' && p === '/api/debug/verify') {
       if (!allowDebugAttempt(req)) { json(res, 429, { error: 'too many attempts' }); return; }
       const body = await readBody(req, 8 * 1024), code = String(body.code || '').trim(), cfg = readRuntimeConfig();
@@ -608,7 +637,7 @@ const server = http.createServer(async (req, res) => {
       let saves = 0, completed = 0;
       for (const user of users) { const rec = user && user.userId ? readSaveRecord(user.userId) : null; if (rec) { saves++; if (rec.save && rec.save.gameCompleted) completed++; } }
       const lb = readLeaderboard(), formalCount = Math.min(200, formalSortedEntries(lb.entries).length);
-      json(res, 200, { users: users.length, saves, completed, active7d: users.filter((x) => now - Number(x.lastLoginAt || 0) <= 7 * 86400000).length, leaderboard: formalCount, version: VERSION }); return;
+      json(res, 200, Object.assign({ users: users.length, saves, completed, active7d: users.filter((x) => now - Number(x.lastLoginAt || 0) <= 7 * 86400000).length, leaderboard: formalCount, version: VERSION }, lottery.summary())); return;
     }
     if (p === '/api/admin/players' && req.method === 'GET') { if (!requireAdmin(req, res)) return; json(res, 200, adminPlayers(Object.fromEntries(u.searchParams.entries()))); return; }
     if (p === '/api/admin/player' && req.method === 'GET') {
@@ -621,6 +650,17 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === '/api/admin/config' && req.method === 'GET') { if (!requireAdmin(req, res)) return; json(res, 200, readRuntimeConfig()); return; }
     if (p === '/api/admin/config' && (req.method === 'PUT' || req.method === 'POST')) { if (!requireAdmin(req, res)) return; json(res, 200, writeRuntimeConfig(await readBody(req, 24 * 1024))); return; }
+    if (p === '/api/admin/lottery/config' && req.method === 'GET') { if (!requireAdmin(req, res)) return; json(res, 200, lottery.getConfig()); return; }
+    if (p === '/api/admin/lottery/config' && (req.method === 'PUT' || req.method === 'POST')) { if (!requireAdmin(req, res)) return; json(res, 200, lottery.writeConfig(await readBody(req, 96 * 1024))); return; }
+    if (p === '/api/admin/lottery/ticket' && req.method === 'GET') {
+      if (!requireAdmin(req, res)) return;const code=String(u.searchParams.get('code')||'').trim();
+      if(!/^\d{8}$/.test(code)){json(res,400,{error:'请输入8位兑奖码'});return;}
+      const ticket=lottery.findTicket(code);if(!ticket){json(res,404,{error:'未找到该兑奖码'});return;}json(res,200,{ok:true,ticket});return;
+    }
+    if (p === '/api/admin/lottery/redeem' && req.method === 'POST') {
+      if (!requireAdmin(req, res)) return;const body=await readBody(req,12*1024),code=String(body.code||'').trim();
+      if(!/^\d{8}$/.test(code)){json(res,400,{error:'请输入8位兑奖码'});return;}json(res,200,lottery.redeem(code));return;
+    }
     if (p === '/api/admin/leaderboard' && req.method === 'GET') {
       if (!requireAdmin(req, res)) return;
       const sorted = sortedEntries(readLeaderboard().entries).slice(0, 200).map((x, i) => Object.assign({ rank: i + 1, durationText: durationText(x.durationMs) }, x));
@@ -636,7 +676,7 @@ const server = http.createServer(async (req, res) => {
     json(res, 404, { error: 'not found' });
   } catch (err) {
     console.error('[server]', err);
-    const status = /too large/i.test(String(err && err.message)) ? 413 : 500;
+    const status = Number(err && err.status) || (/too large/i.test(String(err && err.message)) ? 413 : 500);
     json(res, status, { error: err && err.message ? err.message : 'internal error' });
   }
 });
