@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * 坡南寻宝记 v5.52.0 微信小游戏独立后端
+ * 坡南寻宝记 v5.54.0 微信小游戏独立后端
  * Node.js 18+，无第三方依赖。
  *
  * 环境变量：
@@ -20,7 +20,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const VERSION = '5.53.0';
+const VERSION = '5.54.0';
 const PORT = Number(process.env.PORT || 3000);
 const APPID = String(process.env.WECHAT_APPID || '').trim();
 const APPSECRET = String(process.env.WECHAT_APPSECRET || '').trim();
@@ -38,6 +38,7 @@ const ADMIN_HTML = path.join(__dirname, 'public', 'admin', 'index.html');
 const LOTTERY_ADMIN_HTML = path.join(__dirname, 'public', 'admin', 'lottery.html');
 const lottery = require('./lottery')(DATA_DIR);
 const redeemers = require('./redeemers')(DATA_DIR);
+const bgmStore = require('./bgm')(DATA_DIR);
 const staffAttempts=new Map();
 function requireRedeemer(req,res){
   const token=verifyToken(bearer(req),'redeemer'),actor=token&&redeemers.session(token.sub);
@@ -85,6 +86,20 @@ function readBody(req, limit = 320 * 1024) {
         resolve(JSON.parse(raw));
       } catch (e) { reject(new Error('invalid json')); }
     });
+    req.on('error', reject);
+  });
+}
+
+function readRawBody(req, limit = 15 * 1024 * 1024) {
+  return new Promise((resolve, reject) => {
+    const chunks = []; let size = 0; let failed = false;
+    req.on('data', (chunk) => {
+      if (failed) return;
+      size += chunk.length;
+      if (size > limit) { failed = true; const err = new Error('音乐文件不能超过15MB'); err.status = 413; reject(err); return; }
+      chunks.push(chunk);
+    });
+    req.on('end', () => { if (!failed) resolve(Buffer.concat(chunks)); });
     req.on('error', reject);
   });
 }
@@ -343,18 +358,29 @@ async function handleSaveSync(req, res) {
 }
 
 function defaultRuntimeConfig() {
-  return { maintenanceMode: false, bgmVolume: 55, sfxVolume: 100, bgmUrl: '', debugModeEnabled: true, debugScoresEnabled: false, debugEntryCode: '9999' };
+  return { maintenanceMode: false, bgmVolume: 55, sfxVolume: 100, bgmSource: 'local', bgmTrackId: '', bgmUrl: '', debugModeEnabled: true, debugScoresEnabled: false, debugEntryCode: '9999' };
 }
 function readRuntimeConfig() {
   ensureJson(CONFIG_FILE, defaultRuntimeConfig);
-  return Object.assign(defaultRuntimeConfig(), readJson(CONFIG_FILE, defaultRuntimeConfig));
+  const raw = readJson(CONFIG_FILE, defaultRuntimeConfig);
+  const value = Object.assign(defaultRuntimeConfig(), raw);
+  if (!Object.prototype.hasOwnProperty.call(raw, 'bgmSource')) value.bgmSource = value.bgmUrl ? 'url' : 'local';
+  return value;
 }
 function writeRuntimeConfig(input) {
   const current = readRuntimeConfig();
   if (input.maintenanceMode != null) current.maintenanceMode = !!input.maintenanceMode;
   if (input.bgmVolume != null) current.bgmVolume = Math.max(0, Math.min(100, Math.round(Number(input.bgmVolume) || 0)));
   if (input.sfxVolume != null) current.sfxVolume = Math.max(0, Math.min(100, Math.round(Number(input.sfxVolume) || 0)));
+  if (input.bgmSource != null) {
+    const source = String(input.bgmSource || 'local');
+    if (!['local', 'uploaded', 'url'].includes(source)) { const err = new Error('背景音乐来源无效'); err.status = 400; throw err; }
+    current.bgmSource = source;
+  }
+  if (input.bgmTrackId != null) current.bgmTrackId = String(input.bgmTrackId || '').trim().slice(0, 40);
   if (input.bgmUrl != null) current.bgmUrl = String(input.bgmUrl || '').trim().slice(0, 500);
+  if (current.bgmSource === 'uploaded' && !bgmStore.find(current.bgmTrackId)) { const err = new Error('请选择一首已上传的背景音乐'); err.status = 400; throw err; }
+  if (current.bgmSource === 'url' && !/^https:\/\//i.test(current.bgmUrl)) { const err = new Error('远程音乐地址必须以 https:// 开头'); err.status = 400; throw err; }
   if (input.debugModeEnabled != null) current.debugModeEnabled = !!input.debugModeEnabled;
   if (input.debugScoresEnabled != null) current.debugScoresEnabled = !!input.debugScoresEnabled;
   if (input.debugEntryCode != null) { const code = String(input.debugEntryCode || '').trim(); if (/^\d{4}$/.test(code)) current.debugEntryCode = code; }
@@ -365,8 +391,30 @@ function publicRuntimeConfig() {
   const c = readRuntimeConfig();
   const out = Object.assign({}, c);
   delete out.debugEntryCode;
+  if (c.bgmSource === 'uploaded') { const track = bgmStore.find(c.bgmTrackId); out.bgmUrl = track ? track.url : ''; }
+  else if (c.bgmSource !== 'url') out.bgmUrl = '';
+  delete out.bgmTrackId;
   out.lotteryEnabled = !!lottery.publicConfig().enabled;
   return out;
+}
+
+function serveBgm(req, res, id) {
+  const item = bgmStore.find(id);
+  if (!item) { json(res, 404, { error: '背景音乐不存在' }); return; }
+  const stat = fs.statSync(item.path), total = stat.size;
+  let start = 0, end = total - 1, status = 200;
+  const range = String(req.headers.range || '');
+  if (range) {
+    const match = /^bytes=(\d*)-(\d*)$/.exec(range);
+    if (!match) { res.writeHead(416, { 'content-range': `bytes */${total}` }); res.end(); return; }
+    start = match[1] ? Number(match[1]) : 0; end = match[2] ? Number(match[2]) : end;
+    if (start > end || start >= total) { res.writeHead(416, { 'content-range': `bytes */${total}` }); res.end(); return; }
+    end = Math.min(end, total - 1); status = 206;
+  }
+  const headers = { 'content-type': item.mime, 'content-length': String(end - start + 1), 'accept-ranges': 'bytes', 'cache-control': 'public, max-age=31536000, immutable', 'x-content-type-options': 'nosniff' };
+  if (status === 206) headers['content-range'] = `bytes ${start}-${end}/${total}`;
+  res.writeHead(status, headers);
+  if (req.method === 'HEAD') res.end(); else fs.createReadStream(item.path, { start, end }).pipe(res);
 }
 
 const DEBUG_ATTEMPTS = new Map();
@@ -571,6 +619,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'GET' && (p === '/admin' || p === '/admin/')) { serveAdmin(res); return; }
     if (req.method === 'GET' && (p === '/admin/lottery' || p === '/admin/lottery/')) { serveLotteryAdmin(res); return; }
+    if ((req.method === 'GET' || req.method === 'HEAD') && p.startsWith('/media/bgm/')) { serveBgm(req, res, p.slice('/media/bgm/'.length)); return; }
     if (req.method === 'POST' && p === '/api/auth/wechat-login') { await handleLogin(req, res); return; }
     if (req.method === 'GET' && p === '/api/auth/me') {
       const userId = requireUser(req, res); if (!userId) return;
@@ -687,6 +736,18 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === '/api/admin/config' && req.method === 'GET') { if (!requireAdmin(req, res)) return; json(res, 200, readRuntimeConfig()); return; }
     if (p === '/api/admin/config' && (req.method === 'PUT' || req.method === 'POST')) { if (!requireAdmin(req, res)) return; json(res, 200, writeRuntimeConfig(await readBody(req, 24 * 1024))); return; }
+    if (p === '/api/admin/bgm' && req.method === 'GET') { if (!requireAdmin(req, res)) return; json(res, 200, { items: bgmStore.list() }); return; }
+    if (p === '/api/admin/bgm/upload' && req.method === 'POST') {
+      if (!requireAdmin(req, res)) return;
+      let name = '背景音乐'; try { name = decodeURIComponent(String(req.headers['x-file-name'] || name)); } catch (_) {}
+      json(res, 200, { ok: true, item: bgmStore.add(await readRawBody(req), name) }); return;
+    }
+    if (p === '/api/admin/bgm/delete' && req.method === 'POST') {
+      if (!requireAdmin(req, res)) return;
+      const body = await readBody(req, 4096), id = String(body.id || ''), cfg = readRuntimeConfig();
+      if (cfg.bgmSource === 'uploaded' && cfg.bgmTrackId === id) { json(res, 409, { error: '这首音乐正在使用，请先切换背景音乐并保存' }); return; }
+      json(res, 200, { ok: true, removed: bgmStore.remove(id) }); return;
+    }
     if (p === '/api/admin/lottery/config' && req.method === 'GET') { if (!requireAdmin(req, res)) return; json(res, 200, lottery.getConfig()); return; }
     if (p === '/api/admin/lottery/config' && (req.method === 'PUT' || req.method === 'POST')) { if (!requireAdmin(req, res)) return; json(res, 200, lottery.writeConfig(await readBody(req, 96 * 1024))); return; }
     if (p === '/api/admin/lottery/ticket' && req.method === 'GET') {

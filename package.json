@@ -1,6 +1,6 @@
 {
   "name": "ponan-wechat-minigame",
-  "version": "5.53.0",
+  "version": "5.54.0",
   "private": true,
   "scripts": {
     "start": "node server.js"
