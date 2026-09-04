@@ -20,7 +20,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const VERSION = '5.52.0';
+const VERSION = '5.53.0';
 const PORT = Number(process.env.PORT || 3000);
 const APPID = String(process.env.WECHAT_APPID || '').trim();
 const APPSECRET = String(process.env.WECHAT_APPSECRET || '').trim();
@@ -282,14 +282,18 @@ function safeUserId(userId) {
   return s;
 }
 function saveFileFor(userId) { return path.join(SAVE_DIR, safeUserId(userId) + '.json'); }
+const migrateRoute=require('./routeMigration');
 function readSaveRecord(userId) {
   const file = saveFileFor(userId);
   if (!fs.existsSync(file)) return null;
   const rec = readJson(file, null);
+  if(rec&&rec.save)rec.save=migrateRoute(rec.save);
   return rec && typeof rec === 'object' ? rec : null;
 }
 function writeSaveRecord(userId, save, appVersion) {
-  const cleanSave = JSON.parse(JSON.stringify(save || {}));
+  const existing=readJson(saveFileFor(userId),null);
+  if(existing&&Number(existing.save&&existing.save.routeVersion)>=20&&(Number(save&&save.routeVersion)||0)<20)throw new Error('请升级至v5.61.0后同步存档');
+  const cleanSave = migrateRoute(JSON.parse(JSON.stringify(save || {})));
   cleanSave.ownerUserId = userId;
   const serialized = JSON.stringify(cleanSave);
   if (Buffer.byteLength(serialized) > 256 * 1024) throw new Error('save data too large');
@@ -380,7 +384,7 @@ function incrementVisit() {
   d.count = Math.max(1000, Number(d.count) || 1000) + 1;
   d.updatedAt = Date.now(); atomicWrite(VISIT_FILE, d); return d.count;
 }
-function readStageRecords() { ensureJson(STAGE_FILE, { stages: {} }); const d = readJson(STAGE_FILE, { stages: {} }); if (!d.stages) d.stages = {}; return d; }
+function readStageRecords() { ensureJson(STAGE_FILE, { stages: {},routeVersion:20 }); const d = readJson(STAGE_FILE, { stages: {} }); if (!d.stages) d.stages = {}; if((Number(d.routeVersion)||0)<20){if(Object.prototype.hasOwnProperty.call(d.stages,'19')){d.stages[20]=d.stages[19];delete d.stages[19];}d.routeVersion=20;atomicWrite(STAGE_FILE,d);}return d; }
 function updateStageRecord(stageId, score) {
   const d = readStageRecords(), key = String(stageId), prev = Math.max(0, Number(d.stages[key] || 0));
   if (score > prev) { d.stages[key] = score; d.updatedAt = Date.now(); atomicWrite(STAGE_FILE, d); }
@@ -481,7 +485,7 @@ function summarizeSave(save) {
   if (!best['1'] && !best[1]) totalScore += Math.max(0, Number(s.stage1Best) || 0);
   const treasures = s.treasures && typeof s.treasures === 'object' ? Object.values(s.treasures).filter(Boolean).length : 0;
   return {
-    currentStage: Math.max(1, Math.min(19, Number(s.unlocked) || 1)),
+    currentStage: Math.max(1, Math.min(20, Number(s.unlocked) || 1)),
     gameCompleted: !!s.gameCompleted,
     jade: Math.max(0, Number(s.jade) || 0),
     treasureCount: treasures + (s.treasure ? 1 : 0),
@@ -618,11 +622,11 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'POST' && p === '/api/visit-counter') { json(res, 200, { count: incrementVisit() }); return; }
     if (p === '/api/stage-records' && req.method === 'GET') {
-      const stage = Math.max(1, Math.min(19, Number(u.searchParams.get('stage')) || 1));
+      const stage = Math.max(1, Math.min(20, Number(u.searchParams.get('stage')) || 1));
       const d = readStageRecords(); json(res, 200, { stageId: stage, score: Math.max(0, Number(d.stages[String(stage)] || 0)) }); return;
     }
     if (p === '/api/stage-records' && req.method === 'POST') {
-      const body = await readBody(req, 16 * 1024), stage = Math.max(1, Math.min(19, Number(body.stageId) || 1)), score = Math.max(0, Math.floor(Number(body.score) || 0));
+      const body = await readBody(req, 16 * 1024), stage = Math.max(1, Math.min(20, Number(body.stageId) || 1)), score = Math.max(0, Math.floor(Number(body.score) || 0));
       json(res, 200, { ok: true, stageId: stage, score: updateStageRecord(stage, score) }); return;
     }
 
@@ -641,7 +645,7 @@ const server = http.createServer(async (req, res) => {
       const userId = requireUser(req, res); if (!userId) return;
       const body = await readBody(req, 32 * 1024);
       const rec = readSaveRecord(userId), save = rec && rec.save;
-      if (!save || !save.gameCompleted) { json(res, 409, { error: '请先完成游戏并同步云存档' }); return; }
+      if (!save || !save.gameCompleted || !save.completedStages?.[19] || !save.completedStages?.[20]) { json(res, 409, { error: '请先完成游戏并同步云存档' }); return; }
       const runtimeCfg = readRuntimeConfig();
       if (save.debugUsed && !runtimeCfg.debugScoresEnabled) { json(res, 403, { error: '本局使用过调试跳关，且后台未开启“调试模式记录成绩”' }); return; }
       // 正式榜单不再相信客户端传入总分：以服务器当前云存档为准。

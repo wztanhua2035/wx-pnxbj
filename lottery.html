@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>坡南寻宝记 · 抽奖管理</title>
+  <style>
+    :root{color-scheme:light;--ink:#493724;--muted:#7f6c57;--paper:#fffaf0;--line:#dfc89f;--green:#326b58;--gold:#b87824;--red:#9f3f35}
+    *{box-sizing:border-box}body{margin:0;background:linear-gradient(145deg,#eee5d5,#d9c7a8);color:var(--ink);font:14px/1.55 system-ui,"Microsoft YaHei",sans-serif}.wrap{max-width:1180px;margin:auto;padding:28px 18px 60px}h1{margin:0;font-family:serif;font-size:30px}.sub{color:var(--muted);margin:4px 0 22px}.card{background:rgba(255,250,240,.96);border:1px solid var(--line);border-radius:18px;padding:20px;margin:14px 0;box-shadow:0 12px 30px rgba(72,51,25,.09)}.row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.space{justify-content:space-between}.hidden{display:none!important}button{border:0;border-radius:10px;padding:10px 18px;background:var(--green);color:white;font-weight:700;cursor:pointer}button.secondary{background:#80694e}button.danger{background:var(--red)}button.gold{background:var(--gold)}input,textarea{width:100%;border:1px solid #ccb58e;border-radius:9px;background:white;color:var(--ink);padding:9px 10px;font:inherit}textarea{min-height:110px;resize:vertical}label{font-weight:700}.login{max-width:430px;margin:12vh auto}.login input{margin:12px 0}.switch{display:flex;align-items:center;gap:10px;font-size:16px}.switch input{width:20px;height:20px}.message{min-height:22px;color:var(--red);font-weight:700}.ok{color:var(--green)}table{width:100%;border-collapse:collapse;min-width:1050px}th,td{border-bottom:1px solid #eadcc4;padding:8px 6px;text-align:left;vertical-align:top}th{white-space:nowrap;color:#70583f}.table-wrap{overflow:auto}.name{min-width:130px}.url{min-width:235px}.num{width:92px}.note{min-width:180px}.mini{padding:7px 11px}.summary{font-weight:700;color:var(--muted)}.ticket{margin-top:14px;padding:16px;border:2px dashed #c19c61;border-radius:14px;background:#fff7e5}.ticket strong{font-size:20px}.stamp{display:inline-block;margin-left:12px;padding:4px 12px;border:3px solid var(--red);color:var(--red);font-size:18px;font-weight:900;transform:rotate(-8deg)}@media(max-width:640px){.wrap{padding:16px 10px}.card{padding:14px}h1{font-size:25px}}
+  .integrated{background:#18221f;color:#edf3ef;--ink:#edf3ef;--muted:#9fb0a8;--red:#eb9b90;--green:#80cea1}
+.integrated .wrap{padding:0 10px 20px}.integrated #app>.row:first-child,.integrated #login{display:none!important}
+.integrated .card{background:#202d29;border-color:#31413b;box-shadow:none}.integrated input,.integrated textarea{background:#111916;color:#edf3ef;border-color:#4b6055}.integrated th{color:#d5ad63}.integrated td,.integrated th{border-color:#31413b}.integrated a{color:#d5ad63}.integrated button{background:#326b58}.integrated .ticket{background:#18221f}.integrated button.danger{background:#943b37}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <section id="login" class="card login">
+      <h1>抽奖管理登录</h1>
+      <p class="sub">使用现有坡南寻宝记管理后台密码。</p>
+      <input id="password" type="password" autocomplete="current-password" placeholder="管理后台密码">
+      <button id="loginBtn">登录</button>
+      <p id="loginMsg" class="message"></p>
+    </section>
+
+    <main id="app" class="hidden">
+      <div class="row space"><div><h1>坡南寻宝记 · 抽奖管理</h1><p class="sub">服务器负责资格、概率、库存、兑奖码与核销。</p></div><div class="row"><button class="secondary" onclick="location.href='/admin'">返回原管理后台</button><button class="secondary" id="logoutBtn">退出</button></div></div>
+      <section class="card">
+        <div class="row space"><label class="switch"><input id="enabled" type="checkbox">开启抽奖功能</label><span class="summary" id="probabilityTotal">概率合计：0%</span></div>
+        <p class="sub">默认关闭。关闭后，小游戏内不会出现抽奖、奖品入口或相关提示；已有奖券仍保留。</p>
+        <p><a target="_top" href="/admin#redeemers">核销员账号管理</a> · <a target="_blank" rel="noopener" href="/redeem">手机核销工作台</a></p>
+        <div class="row"><label>普通通关次数<input id="normalDraws" type="number" min="0" max="100" value="1"></label><label>S级通关总次数（非额外次数）<input id="sDraws" type="number" min="0" max="100" value="2"></label></div>
+        <p class="sub">次数调整立即生效；已使用次数保留，不会因保存配置重置。规则文案请与配置保持一致。</p>
+        <label for="rules">抽奖规则</label>
+        <textarea id="rules" maxlength="5000" placeholder="填写玩家在“规则”页面看到的内容"></textarea>
+      </section>
+
+      <section class="card">
+        <div class="row space"><div><h2>奖项设置</h2><p class="sub">图片填写可公开访问的 HTTPS 地址；概率合计不得超过100%，剩余概率为“谢谢参与”。</p></div><button class="gold" id="addPrizeBtn">新增奖项</button></div>
+        <div class="table-wrap"><table><thead><tr><th>奖项名称</th><th>图片地址</th><th>总数量</th><th>剩余数量</th><th>中奖概率%</th><th>备注</th><th>操作</th></tr></thead><tbody id="prizeRows"></tbody></table></div>
+        <div class="row" style="margin-top:16px"><button id="saveBtn">保存全部设置</button><span id="saveMsg" class="message"></span></div>
+      </section>
+
+      <section class="card">
+        <h2>兑奖码查询与核销</h2>
+        <p class="sub">输入玩家奖券上的8位数字。调试奖券会显示“无效”，不能核销。</p>
+        <div class="row"><input id="code" inputmode="numeric" maxlength="8" placeholder="8位兑奖码" style="max-width:220px;font-size:20px;letter-spacing:4px"><button id="queryBtn">查询</button></div>
+        <p id="ticketMsg" class="message"></p>
+        <div id="ticketBox" class="ticket hidden"></div>
+      </section>
+    </main>
+  </div>
+  <script>
+if(window.parent!==window)document.body.classList.add('integrated');
+    const tokenKey='ponan_admin_token';let token=sessionStorage.getItem('pn_admin_token')||(window.parent===window?localStorage.getItem(tokenKey):'')||'',currentTicket=null;
+    const $=id=>document.getElementById(id);
+    async function api(path,options){
+      const o=Object.assign({method:'GET'},options||{});o.headers=Object.assign({'content-type':'application/json'},token?{Authorization:'Bearer '+token}:{},o.headers||{});
+      const r=await fetch(path,o),data=await r.json().catch(()=>({}));if(!r.ok){if(r.status===401&&window.parent!==window)window.parent.postMessage('ponan-admin-expired',location.origin);const e=new Error(data.error||('HTTP '+r.status));e.status=r.status;throw e}return data;
+    }
+    function showApp(on){$('login').classList.toggle('hidden',on);$('app').classList.toggle('hidden',!on)}
+    function input(cls,type,value){const el=document.createElement(type==='textarea'?'textarea':'input');el.className=cls;if(type!=='textarea')el.type=type;el.value=value==null?'':value;return el}
+    function addPrize(p){
+      p=p||{};const tr=document.createElement('tr');tr.dataset.id=p.id||('prize_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,7));
+      const fields=[input('name','text',p.name),input('url','url',p.imageUrl),input('num','number',p.totalQuantity||0),input('num','number',p.remainingQuantity||0),input('num probability','number',p.probability||0),input('note','text',p.note)];
+      fields[2].min=fields[3].min=fields[4].min='0';fields[4].max='100';fields[4].step='0.0001';
+      fields.forEach(el=>{const td=document.createElement('td');td.appendChild(el);tr.appendChild(td)});
+      const td=document.createElement('td'),del=document.createElement('button');del.textContent='删除';del.className='danger mini';del.onclick=()=>{tr.remove();calcProbability()};td.appendChild(del);tr.appendChild(td);$('prizeRows').appendChild(tr);fields[4].addEventListener('input',calcProbability);calcProbability();
+    }
+    function calcProbability(){const n=[...document.querySelectorAll('.probability')].reduce((s,x)=>s+(Number(x.value)||0),0);$('probabilityTotal').textContent='概率合计：'+Math.round(n*10000)/10000+'%';$('probabilityTotal').style.color=n>100?'#9f3f35':'#7f6c57'}
+    function collectPrizes(){return [...$('prizeRows').querySelectorAll('tr')].map(tr=>{const x=tr.querySelectorAll('input');return{id:tr.dataset.id,name:x[0].value,imageUrl:x[1].value,totalQuantity:Number(x[2].value)||0,remainingQuantity:Number(x[3].value)||0,probability:Number(x[4].value)||0,note:x[5].value}})}
+    async function load(){
+      try{const c=await api('/api/admin/lottery/config');$('enabled').checked=!!c.enabled;$('rules').value=c.rules||'';$('normalDraws').value=c.normalDraws==null?1:c.normalDraws;$('sDraws').value=c.sDraws==null?2:c.sDraws;$('prizeRows').textContent='';(c.prizes||[]).forEach(addPrize);showApp(true)}catch(e){if(e.status===401){token='';localStorage.removeItem(tokenKey);showApp(false)}else{$('loginMsg').textContent=e.message}}
+    }
+    $('loginBtn').onclick=async()=>{try{const r=await api('/api/admin/login',{method:'POST',body:JSON.stringify({password:$('password').value})});token=r.token;localStorage.setItem(tokenKey,token);$('loginMsg').textContent='';await load()}catch(e){$('loginMsg').textContent=e.message}};
+    $('password').addEventListener('keydown',e=>{if(e.key==='Enter')$('loginBtn').click()});
+    $('logoutBtn').onclick=()=>{token='';localStorage.removeItem(tokenKey);showApp(false)};
+    $('addPrizeBtn').onclick=()=>addPrize({});
+    $('saveBtn').onclick=async()=>{const msg=$('saveMsg');msg.className='message';msg.textContent='正在保存…';try{await api('/api/admin/lottery/config',{method:'PUT',body:JSON.stringify({enabled:$('enabled').checked,normalDraws:Number($('normalDraws').value),sDraws:Number($('sDraws').value),rules:$('rules').value,prizes:collectPrizes()})});msg.className='message ok';msg.textContent='设置已保存并立即生效';await load()}catch(e){msg.textContent=e.message}};
+    $('queryBtn').onclick=async()=>{const msg=$('ticketMsg'),box=$('ticketBox');msg.textContent='';box.classList.add('hidden');currentTicket=null;try{const r=await api('/api/admin/lottery/ticket?code='+encodeURIComponent($('code').value.trim()));currentTicket=r.ticket;renderTicket()}catch(e){msg.textContent=e.message}};
+    function renderTicket(){const t=currentTicket,box=$('ticketBox');box.textContent='';if(!t)return;const title=document.createElement('div'),meta=document.createElement('p'),stamp=document.createElement('span');title.innerHTML='<strong></strong>';title.querySelector('strong').textContent=t.prizeName+' · '+t.code;meta.textContent='获得时间：'+new Date(t.createdAt).toLocaleString()+(t.note?' · '+t.note:'');box.append(title,meta);if(t.debug){stamp.className='stamp';stamp.textContent='无效';box.appendChild(stamp)}else if(t.redeemed){stamp.className='stamp';stamp.textContent='已领';box.appendChild(stamp)}else{const b=document.createElement('button');b.textContent='确认核销';b.onclick=redeem;box.appendChild(b)}box.classList.remove('hidden')}
+    async function redeem(){if(!currentTicket||!confirm('确认玩家已经领取“'+currentTicket.prizeName+'”吗？'))return;try{const r=await api('/api/admin/lottery/redeem',{method:'POST',body:JSON.stringify({code:currentTicket.code})});currentTicket=r.ticket;renderTicket();$('ticketMsg').className='message ok';$('ticketMsg').textContent='核销成功'}catch(e){$('ticketMsg').className='message';$('ticketMsg').textContent=e.message}}
+    if(token)load();else showApp(false);
+  </script>
+</body>
+</html>
