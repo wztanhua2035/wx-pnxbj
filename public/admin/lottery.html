@@ -7,7 +7,10 @@
   <style>
     :root{color-scheme:light;--ink:#493724;--muted:#7f6c57;--paper:#fffaf0;--line:#dfc89f;--green:#326b58;--gold:#b87824;--red:#9f3f35}
     *{box-sizing:border-box}body{margin:0;background:linear-gradient(145deg,#eee5d5,#d9c7a8);color:var(--ink);font:14px/1.55 system-ui,"Microsoft YaHei",sans-serif}.wrap{max-width:1180px;margin:auto;padding:28px 18px 60px}h1{margin:0;font-family:serif;font-size:30px}.sub{color:var(--muted);margin:4px 0 22px}.card{background:rgba(255,250,240,.96);border:1px solid var(--line);border-radius:18px;padding:20px;margin:14px 0;box-shadow:0 12px 30px rgba(72,51,25,.09)}.row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.space{justify-content:space-between}.hidden{display:none!important}button{border:0;border-radius:10px;padding:10px 18px;background:var(--green);color:white;font-weight:700;cursor:pointer}button.secondary{background:#80694e}button.danger{background:var(--red)}button.gold{background:var(--gold)}input,textarea{width:100%;border:1px solid #ccb58e;border-radius:9px;background:white;color:var(--ink);padding:9px 10px;font:inherit}textarea{min-height:110px;resize:vertical}label{font-weight:700}.login{max-width:430px;margin:12vh auto}.login input{margin:12px 0}.switch{display:flex;align-items:center;gap:10px;font-size:16px}.switch input{width:20px;height:20px}.message{min-height:22px;color:var(--red);font-weight:700}.ok{color:var(--green)}table{width:100%;border-collapse:collapse;min-width:1050px}th,td{border-bottom:1px solid #eadcc4;padding:8px 6px;text-align:left;vertical-align:top}th{white-space:nowrap;color:#70583f}.table-wrap{overflow:auto}.name{min-width:130px}.url{min-width:235px}.num{width:92px}.note{min-width:180px}.mini{padding:7px 11px}.summary{font-weight:700;color:var(--muted)}.ticket{margin-top:14px;padding:16px;border:2px dashed #c19c61;border-radius:14px;background:#fff7e5}.ticket strong{font-size:20px}.stamp{display:inline-block;margin-left:12px;padding:4px 12px;border:3px solid var(--red);color:var(--red);font-size:18px;font-weight:900;transform:rotate(-8deg)}@media(max-width:640px){.wrap{padding:16px 10px}.card{padding:14px}h1{font-size:25px}}
-  </style>
+  .integrated{background:#18221f;color:#edf3ef;--ink:#edf3ef;--muted:#9fb0a8;--red:#eb9b90;--green:#80cea1}
+.integrated .wrap{padding:0 10px 20px}.integrated #app>.row:first-child,.integrated #login{display:none!important}
+.integrated .card{background:#202d29;border-color:#31413b;box-shadow:none}.integrated input,.integrated textarea{background:#111916;color:#edf3ef;border-color:#4b6055}.integrated th{color:#d5ad63}.integrated td,.integrated th{border-color:#31413b}.integrated a{color:#d5ad63}.integrated button{background:#326b58}.integrated .ticket{background:#18221f}.integrated button.danger{background:#943b37}
+</style>
 </head>
 <body>
   <div class="wrap">
@@ -24,7 +27,7 @@
       <section class="card">
         <div class="row space"><label class="switch"><input id="enabled" type="checkbox">开启抽奖功能</label><span class="summary" id="probabilityTotal">概率合计：0%</span></div>
         <p class="sub">默认关闭。关闭后，小游戏内不会出现抽奖、奖品入口或相关提示；已有奖券仍保留。</p>
-        <p><a href="/admin/redeemers">核销员账号管理</a> · <a href="/redeem">手机核销工作台</a></p>
+        <p><a target="_top" href="/admin#redeemers">核销员账号管理</a> · <a target="_blank" rel="noopener" href="/redeem">手机核销工作台</a></p>
         <div class="row"><label>普通通关次数<input id="normalDraws" type="number" min="0" max="100" value="1"></label><label>S级通关总次数（非额外次数）<input id="sDraws" type="number" min="0" max="100" value="2"></label></div>
         <p class="sub">次数调整立即生效；已使用次数保留，不会因保存配置重置。规则文案请与配置保持一致。</p>
         <label for="rules">抽奖规则</label>
@@ -47,11 +50,12 @@
     </main>
   </div>
   <script>
-    const tokenKey='ponan_admin_token';let token=localStorage.getItem(tokenKey)||'',currentTicket=null;
+if(window.parent!==window)document.body.classList.add('integrated');
+    const tokenKey='ponan_admin_token';let token=sessionStorage.getItem('pn_admin_token')||(window.parent===window?localStorage.getItem(tokenKey):'')||'',currentTicket=null;
     const $=id=>document.getElementById(id);
     async function api(path,options){
       const o=Object.assign({method:'GET'},options||{});o.headers=Object.assign({'content-type':'application/json'},token?{Authorization:'Bearer '+token}:{},o.headers||{});
-      const r=await fetch(path,o),data=await r.json().catch(()=>({}));if(!r.ok){const e=new Error(data.error||('HTTP '+r.status));e.status=r.status;throw e}return data;
+      const r=await fetch(path,o),data=await r.json().catch(()=>({}));if(!r.ok){if(r.status===401&&window.parent!==window)window.parent.postMessage('ponan-admin-expired',location.origin);const e=new Error(data.error||('HTTP '+r.status));e.status=r.status;throw e}return data;
     }
     function showApp(on){$('login').classList.toggle('hidden',on);$('app').classList.toggle('hidden',!on)}
     function input(cls,type,value){const el=document.createElement(type==='textarea'?'textarea':'input');el.className=cls;if(type!=='textarea')el.type=type;el.value=value==null?'':value;return el}

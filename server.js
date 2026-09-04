@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * 坡南寻宝记 v5.51.0 微信小游戏独立后端
+ * 坡南寻宝记 v5.52.0 微信小游戏独立后端
  * Node.js 18+，无第三方依赖。
  *
  * 环境变量：
@@ -20,7 +20,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const VERSION = '5.51.0';
+const VERSION = '5.52.0';
 const PORT = Number(process.env.PORT || 3000);
 const APPID = String(process.env.WECHAT_APPID || '').trim();
 const APPSECRET = String(process.env.WECHAT_APPSECRET || '').trim();
@@ -519,8 +519,7 @@ function adminPlayers(query) {
 function serveAdmin(res) {
   try {
     let html=fs.readFileSync(ADMIN_HTML, 'utf8');
-    const lotteryLink='<a href="/admin/lottery" style="position:fixed;right:18px;bottom:18px;z-index:9999;padding:11px 16px;border-radius:12px;background:#a66b25;color:#fff;text-decoration:none;font-weight:700;box-shadow:0 6px 18px rgba(0,0,0,.22)">抽奖管理</a>';
-    html=/<\/body>/i.test(html)?html.replace(/<\/body>/i,lotteryLink+'</body>'):html+lotteryLink;
+    // 抽奖与核销员管理已整合进原后台导航，不再注入悬浮跳转入口。
     text(res, 200, html, 'text/html; charset=utf-8');
   }
   catch (e) { text(res, 500, 'admin page missing'); }
