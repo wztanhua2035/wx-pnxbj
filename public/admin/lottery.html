@@ -24,6 +24,9 @@
       <section class="card">
         <div class="row space"><label class="switch"><input id="enabled" type="checkbox">开启抽奖功能</label><span class="summary" id="probabilityTotal">概率合计：0%</span></div>
         <p class="sub">默认关闭。关闭后，小游戏内不会出现抽奖、奖品入口或相关提示；已有奖券仍保留。</p>
+        <p><a href="/admin/redeemers">核销员账号管理</a> · <a href="/redeem">手机核销工作台</a></p>
+        <div class="row"><label>普通通关次数<input id="normalDraws" type="number" min="0" max="100" value="1"></label><label>S级通关总次数（非额外次数）<input id="sDraws" type="number" min="0" max="100" value="2"></label></div>
+        <p class="sub">次数调整立即生效；已使用次数保留，不会因保存配置重置。规则文案请与配置保持一致。</p>
         <label for="rules">抽奖规则</label>
         <textarea id="rules" maxlength="5000" placeholder="填写玩家在“规则”页面看到的内容"></textarea>
       </section>
@@ -62,13 +65,13 @@
     function calcProbability(){const n=[...document.querySelectorAll('.probability')].reduce((s,x)=>s+(Number(x.value)||0),0);$('probabilityTotal').textContent='概率合计：'+Math.round(n*10000)/10000+'%';$('probabilityTotal').style.color=n>100?'#9f3f35':'#7f6c57'}
     function collectPrizes(){return [...$('prizeRows').querySelectorAll('tr')].map(tr=>{const x=tr.querySelectorAll('input');return{id:tr.dataset.id,name:x[0].value,imageUrl:x[1].value,totalQuantity:Number(x[2].value)||0,remainingQuantity:Number(x[3].value)||0,probability:Number(x[4].value)||0,note:x[5].value}})}
     async function load(){
-      try{const c=await api('/api/admin/lottery/config');$('enabled').checked=!!c.enabled;$('rules').value=c.rules||'';$('prizeRows').textContent='';(c.prizes||[]).forEach(addPrize);showApp(true)}catch(e){if(e.status===401){token='';localStorage.removeItem(tokenKey);showApp(false)}else{$('loginMsg').textContent=e.message}}
+      try{const c=await api('/api/admin/lottery/config');$('enabled').checked=!!c.enabled;$('rules').value=c.rules||'';$('normalDraws').value=c.normalDraws==null?1:c.normalDraws;$('sDraws').value=c.sDraws==null?2:c.sDraws;$('prizeRows').textContent='';(c.prizes||[]).forEach(addPrize);showApp(true)}catch(e){if(e.status===401){token='';localStorage.removeItem(tokenKey);showApp(false)}else{$('loginMsg').textContent=e.message}}
     }
     $('loginBtn').onclick=async()=>{try{const r=await api('/api/admin/login',{method:'POST',body:JSON.stringify({password:$('password').value})});token=r.token;localStorage.setItem(tokenKey,token);$('loginMsg').textContent='';await load()}catch(e){$('loginMsg').textContent=e.message}};
     $('password').addEventListener('keydown',e=>{if(e.key==='Enter')$('loginBtn').click()});
     $('logoutBtn').onclick=()=>{token='';localStorage.removeItem(tokenKey);showApp(false)};
     $('addPrizeBtn').onclick=()=>addPrize({});
-    $('saveBtn').onclick=async()=>{const msg=$('saveMsg');msg.className='message';msg.textContent='正在保存…';try{await api('/api/admin/lottery/config',{method:'PUT',body:JSON.stringify({enabled:$('enabled').checked,rules:$('rules').value,prizes:collectPrizes()})});msg.className='message ok';msg.textContent='设置已保存并立即生效';await load()}catch(e){msg.textContent=e.message}};
+    $('saveBtn').onclick=async()=>{const msg=$('saveMsg');msg.className='message';msg.textContent='正在保存…';try{await api('/api/admin/lottery/config',{method:'PUT',body:JSON.stringify({enabled:$('enabled').checked,normalDraws:Number($('normalDraws').value),sDraws:Number($('sDraws').value),rules:$('rules').value,prizes:collectPrizes()})});msg.className='message ok';msg.textContent='设置已保存并立即生效';await load()}catch(e){msg.textContent=e.message}};
     $('queryBtn').onclick=async()=>{const msg=$('ticketMsg'),box=$('ticketBox');msg.textContent='';box.classList.add('hidden');currentTicket=null;try{const r=await api('/api/admin/lottery/ticket?code='+encodeURIComponent($('code').value.trim()));currentTicket=r.ticket;renderTicket()}catch(e){msg.textContent=e.message}};
     function renderTicket(){const t=currentTicket,box=$('ticketBox');box.textContent='';if(!t)return;const title=document.createElement('div'),meta=document.createElement('p'),stamp=document.createElement('span');title.innerHTML='<strong></strong>';title.querySelector('strong').textContent=t.prizeName+' · '+t.code;meta.textContent='获得时间：'+new Date(t.createdAt).toLocaleString()+(t.note?' · '+t.note:'');box.append(title,meta);if(t.debug){stamp.className='stamp';stamp.textContent='无效';box.appendChild(stamp)}else if(t.redeemed){stamp.className='stamp';stamp.textContent='已领';box.appendChild(stamp)}else{const b=document.createElement('button');b.textContent='确认核销';b.onclick=redeem;box.appendChild(b)}box.classList.remove('hidden')}
     async function redeem(){if(!currentTicket||!confirm('确认玩家已经领取“'+currentTicket.prizeName+'”吗？'))return;try{const r=await api('/api/admin/lottery/redeem',{method:'POST',body:JSON.stringify({code:currentTicket.code})});currentTicket=r.ticket;renderTicket();$('ticketMsg').className='message ok';$('ticketMsg').textContent='核销成功'}catch(e){$('ticketMsg').className='message';$('ticketMsg').textContent=e.message}}

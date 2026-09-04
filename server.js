@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * 坡南寻宝记 v5.50.0 微信小游戏独立后端
+ * 坡南寻宝记 v5.51.0 微信小游戏独立后端
  * Node.js 18+，无第三方依赖。
  *
  * 环境变量：
@@ -20,7 +20,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const VERSION = '5.50.0';
+const VERSION = '5.51.0';
 const PORT = Number(process.env.PORT || 3000);
 const APPID = String(process.env.WECHAT_APPID || '').trim();
 const APPSECRET = String(process.env.WECHAT_APPSECRET || '').trim();
@@ -37,6 +37,12 @@ const LEADERBOARD_FILE = path.join(DATA_DIR, 'leaderboard', 'entries.json');
 const ADMIN_HTML = path.join(__dirname, 'public', 'admin', 'index.html');
 const LOTTERY_ADMIN_HTML = path.join(__dirname, 'public', 'admin', 'lottery.html');
 const lottery = require('./lottery')(DATA_DIR);
+const redeemers = require('./redeemers')(DATA_DIR);
+const staffAttempts=new Map();
+function requireRedeemer(req,res){
+  const token=verifyToken(bearer(req),'redeemer'),actor=token&&redeemers.session(token.sub);
+  if(!actor){json(res,401,{error:'请重新登录核销员账号'});return null;}return actor;
+}
 
 function json(res, status, body) {
   const data = Buffer.from(JSON.stringify(body));
@@ -528,6 +534,34 @@ const server = http.createServer(async (req, res) => {
   try {
     const u = new URL(req.url, 'http://localhost');
     const p = u.pathname;
+    if(req.method==='GET'&&['/redeem','/redeem/','/admin/redeemers','/vendor/jsQR.js'].includes(p)){
+      const file=p==='/vendor/jsQR.js'?'public/vendor/jsQR.js':p==='/admin/redeemers'?'public/admin/redeemers.html':'public/redeem.html';
+      text(res,200,fs.readFileSync(path.join(__dirname,file),'utf8'),p.endsWith('.js')?'application/javascript; charset=utf-8':'text/html; charset=utf-8');return;
+    }
+    if(p==='/api/admin/redeemers'){
+      if(!requireAdmin(req,res))return;
+      if(req.method==='GET'){json(res,200,{items:redeemers.list()});return;}
+      if(req.method==='POST'){json(res,200,{ok:true,account:redeemers.save(await readBody(req,16*1024))});return;}
+    }
+    if(p==='/api/redeemer/login'&&req.method==='POST'){
+      const key=String(req.socket.remoteAddress||''),now=Date.now();let attempt=staffAttempts.get(key);
+      if(!attempt||now-attempt.at>600000){attempt={at:now,n:0};staffAttempts.set(key,attempt);}
+      if(++attempt.n>20){json(res,429,{error:'登录尝试过多，请10分钟后重试'});return;}
+      const b=await readBody(req,4096),a=redeemers.login(b.account,b.password);
+      if(!a){json(res,401,{error:'账号或密码错误，或账号已停用'});return;}
+      staffAttempts.delete(key);
+      json(res,200,Object.assign({ok:true,name:a.name},issueToken(a.subject,8*3600000,'redeemer')));return;
+    }
+    if(p==='/api/redeemer/ticket'&&req.method==='GET'){
+      if(!requireRedeemer(req,res))return;const code=String(u.searchParams.get('code')||'');
+      if(!/^\d{8}$/.test(code)){json(res,400,{error:'请输入8位数字兑奖码'});return;}
+      const ticket=lottery.findTicket(code);json(res,ticket?200:404,ticket?{ticket}:{error:'未找到奖券'});return;
+    }
+    if(p==='/api/redeemer/redeem'&&req.method==='POST'){
+      const actor=requireRedeemer(req,res);if(!actor)return;const b=await readBody(req,4096);
+      if(!/^\d{8}$/.test(String(b.code||''))){json(res,400,{error:'兑奖码格式错误'});return;}
+      json(res,200,lottery.redeem(b.code,actor));return;
+    }
 
     if (req.method === 'GET' && p === '/health') {
       json(res, 200, { ok: true, service: 'ponan-wechat-minigame', version: VERSION, authConfigured: !!(APPID && APPSECRET && TOKEN_SECRET.length >= 24), adminConfigured: !!ADMIN_PASSWORD }); return;
