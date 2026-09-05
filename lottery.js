@@ -28,6 +28,7 @@ module.exports=function createLotteryService(dataDir){
     enabled:false,
     normalDraws:1,
     sDraws:2,
+    maxUnredeemedTickets:5,
     rules:'每次完整通关可抽奖1次，获得S级评价可抽奖2次。每位玩家最多获得5件正式奖品，奖券须凭8位兑换码核销。',
     prizes:[],
     updatedAt:0
@@ -52,7 +53,7 @@ module.exports=function createLotteryService(dataDir){
   function publicConfig(){
     const c=getConfig();
     if(!c.enabled)return {enabled:false};
-    return {enabled:true,rules:c.rules,normalDraws:c.normalDraws,sDraws:c.sDraws,prizes:c.prizes.map(p=>({id:p.id,name:p.name,imageUrl:p.imageUrl,remainingQuantity:p.remainingQuantity,probability:p.probability,note:p.note}))};
+    return {enabled:true,rules:c.rules,normalDraws:c.normalDraws,sDraws:c.sDraws,maxUnredeemedTickets:c.maxUnredeemedTickets,prizes:c.prizes.map(p=>({id:p.id,name:p.name,imageUrl:p.imageUrl,remainingQuantity:p.remainingQuantity,probability:p.probability,note:p.note}))};
   }
 
   function writeConfig(input){
@@ -80,12 +81,14 @@ module.exports=function createLotteryService(dataDir){
     const next={
       normalDraws:body.normalDraws==null?old.normalDraws:Number(body.normalDraws),
       sDraws:body.sDraws==null?old.sDraws:Number(body.sDraws),
+      maxUnredeemedTickets:body.maxUnredeemedTickets==null?old.maxUnredeemedTickets:Number(body.maxUnredeemedTickets),
       enabled:body.enabled!=null?!!body.enabled:!!old.enabled,
       rules:body.rules!=null?cleanText(body.rules,5000):old.rules,
       prizes,
       updatedAt:Date.now()
     };
     if(![next.normalDraws,next.sDraws].every(n=>Number.isInteger(n)&&n>=0&&n<=100))fail(400,'抽奖次数必须为0-100的整数');
+    if(!Number.isInteger(next.maxUnredeemedTickets)||next.maxUnredeemedTickets<1||next.maxUnredeemedTickets>5)fail(400,'未兑换奖券上限必须为1-5的整数');
     atomicWrite(CONFIG_FILE,next);return next;
   }
 
@@ -114,11 +117,11 @@ module.exports=function createLotteryService(dataDir){
     const completed=!!save.gameCompleted&&Number(save.gameCompletedAt)>0,completionKey=completed?String(Math.floor(Number(save.gameCompletedAt))):'',allowed=completed?(grade==='S'?cfg.sDraws:cfg.normalDraws):0;
     const usage=state.usageByUser[userId]||{},used=Math.max(0,Math.floor(Number(usage[completionKey])||0));
     const tickets=state.tickets.filter(t=>String(t.userId)===userId).sort((x,y)=>Number(y.createdAt)-Number(x.createdAt));
-    const formalCount=tickets.filter(t=>!t.debug).length,profileReady=realProfile(a.profile),debugMode=!!a.debugMode;
+    const formalCount=tickets.filter(t=>!t.debug).length,pendingCount=tickets.filter(t=>!t.debug&&!t.redeemed).length,profileReady=realProfile(a.profile),debugMode=!!a.debugMode;
     return Object.assign(publicConfig(),{
       profileReady,completed,grade,score,drawsAllowed:allowed,drawsUsed:used,
-      drawsRemaining:cfg.enabled&&profileReady&&completed&&formalCount<5?Math.max(0,allowed-used):0,
-      prizeLimit:5,prizeCount:formalCount,debugMode,debugUnlimited:!!(cfg.enabled&&debugMode),tickets:tickets.map(ticketPublic)
+      drawsRemaining:cfg.enabled&&profileReady&&completed&&formalCount<5&&pendingCount<cfg.maxUnredeemedTickets?Math.max(0,allowed-used):0,
+      prizeLimit:5,prizeCount:formalCount,pendingPrizeCount:pendingCount,maxUnredeemedTickets:cfg.maxUnredeemedTickets,pendingLimitReached:pendingCount>=cfg.maxUnredeemedTickets,debugMode,debugUnlimited:!!(cfg.enabled&&debugMode),tickets:tickets.map(ticketPublic)
     });
   }
   function uniqueCode(state){
@@ -140,6 +143,7 @@ module.exports=function createLotteryService(dataDir){
     if(!debug){
       if(!before.completed)fail(409,'请先完整通关并同步云存档');
       if(before.prizeCount>=5)fail(409,'每位玩家最多获得5件奖品');
+      if(before.pendingLimitReached)fail(409,`您已有${before.pendingPrizeCount}张未兑换奖券，请先领取奖品后再抽奖`);
       if(before.drawsRemaining<=0)fail(409,'本次通关的抽奖次数已用完');
     }
     const state=readState(),userId=String(a.userId||''),prize=pickPrize(cfg,debug);
