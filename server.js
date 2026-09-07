@@ -358,7 +358,7 @@ async function handleSaveSync(req, res) {
 }
 
 function defaultRuntimeConfig() {
-  return { maintenanceMode: false, bgmVolume: 55, sfxVolume: 100, bgmSource: 'local', bgmTrackId: '', bgmUrl: '', debugModeEnabled: true, debugScoresEnabled: false, debugEntryCode: '9999' };
+  return { maintenanceMode: false, bgmVolume: 55, sfxVolume: 100, bgmSource: 'local', bgmTrackId: '', bgmUrl: '', debugModeEnabled: true, debugScoresEnabled: false, debugEntryCode: '9999', announcementEnabled: false, announcementTitle: '', announcementContent: '' };
 }
 function readRuntimeConfig() {
   ensureJson(CONFIG_FILE, defaultRuntimeConfig);
@@ -384,6 +384,9 @@ function writeRuntimeConfig(input) {
   if (input.debugModeEnabled != null) current.debugModeEnabled = !!input.debugModeEnabled;
   if (input.debugScoresEnabled != null) current.debugScoresEnabled = !!input.debugScoresEnabled;
   if (input.debugEntryCode != null) { const code = String(input.debugEntryCode || '').trim(); if (/^\d{4}$/.test(code)) current.debugEntryCode = code; }
+  if (input.announcementEnabled != null) current.announcementEnabled = !!input.announcementEnabled;
+  if (input.announcementTitle != null) current.announcementTitle = String(input.announcementTitle || '').trim().slice(0, 15);
+  if (input.announcementContent != null) current.announcementContent = String(input.announcementContent || '').trim().slice(0, 120);
   atomicWrite(CONFIG_FILE, current);
   return current;
 }
