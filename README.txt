@@ -1,40 +1,11 @@
-坡南寻宝记 v5.35.0 微信小游戏独立后端
+坡南寻宝记后台增量包 v5.61.0
 
-域名：
-  https://wxpnxbj.wzpy.net
-管理后台：
-  https://wxpnxbj.wzpy.net/admin
+覆盖服务器根目录：
+1. lottery.js
+2. public/admin/lottery.html
 
-Zeabur 环境变量：
-  WECHAT_APPID
-  WECHAT_APPSECRET
-  AUTH_TOKEN_SECRET（至少24位，建议48位以上）
-  PASSWORD
-  USER_DB_FILE=/data/auth/users.json
-可选：MINIGAME_DATA_DIR=/data
-
-不要把 AppSecret、AUTH_TOKEN_SECRET、PASSWORD 写入 GitHub。
-继续使用当前 Service 已挂载的 /data Volume，不要重新挂载。
-
-主要接口：
-  POST /api/auth/wechat-login
-  GET  /api/auth/me
-  GET/PUT /api/profile
-  POST /api/save/sync
-  GET  /api/save
-  GET  /api/config
-  POST /api/visit-counter
-  GET/POST /api/stage-records
-  GET  /api/leaderboard
-  GET  /api/leaderboard/me
-  POST /api/leaderboard/wechat   （正式服务器核验成绩）
-
-后台：
-  GET  /admin
-  POST /api/admin/login
-  GET  /api/admin/summary
-  GET  /api/admin/players
-  GET  /api/admin/player?userId=...
-  GET/PUT /api/admin/config
-  GET  /api/admin/leaderboard
-  POST /api/admin/leaderboard/remove
+功能：
+- 每位玩家的奖券仅保存最新 20 条；第 21 条起自动清理最早记录。
+- 抽奖管理的每个奖项可设置兑奖截止日期（年-月-日）。
+- 玩家奖券与后台兑奖查询显示截止日期。
+- 超过截止日期的正式奖券不能核销。

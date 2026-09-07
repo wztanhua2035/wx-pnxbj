@@ -19,6 +19,15 @@ function readJson(file,fallback){
 function fail(status,message){const e=new Error(message);e.status=status;throw e;}
 function cleanText(v,max){return String(v==null?'':v).replace(/[\r\t]/g,' ').trim().slice(0,max);}
 function cleanImage(v){const s=cleanText(v,800);return /^https:\/\//i.test(s)?s:'';}
+function cleanDeadline(v){
+  const s=cleanText(v,10);
+  if(!s)return '';
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(s))fail(400,'兑奖截止日期格式应为年-月-日');
+  const d=new Date(s+'T12:00:00+08:00');
+  if(Number.isNaN(d.getTime())||d.getFullYear()!==Number(s.slice(0,4))||d.getMonth()+1!==Number(s.slice(5,7))||d.getDate()!==Number(s.slice(8,10)))fail(400,'兑奖截止日期无效');
+  return s;
+}
+function deadlineExpired(v){const d=cleanDeadline(v);return !!(d&&Date.now()>Date.parse(d+'T23:59:59.999+08:00'));}
 function randomId(){return 'prize_'+Date.now().toString(36)+'_'+crypto.randomBytes(3).toString('hex');}
 
 module.exports=function createLotteryService(dataDir){
@@ -45,7 +54,8 @@ module.exports=function createLotteryService(dataDir){
       totalQuantity:Math.max(0,Math.floor(Number(p&&p.totalQuantity)||0)),
       remainingQuantity:Math.max(0,Math.floor(Number(p&&p.remainingQuantity)||0)),
       probability:Math.max(0,Math.min(100,Number(p&&p.probability)||0)),
-      note:cleanText(p&&p.note,300)
+      note:cleanText(p&&p.note,300),
+      redemptionDeadline:cleanDeadline(p&&p.redemptionDeadline)
     }));
     return c;
   }
@@ -53,7 +63,7 @@ module.exports=function createLotteryService(dataDir){
   function publicConfig(){
     const c=getConfig();
     if(!c.enabled)return {enabled:false};
-    return {enabled:true,rules:c.rules,normalDraws:c.normalDraws,sDraws:c.sDraws,maxUnredeemedTickets:c.maxUnredeemedTickets,prizes:c.prizes.map(p=>({id:p.id,name:p.name,imageUrl:p.imageUrl,remainingQuantity:p.remainingQuantity,probability:p.probability,note:p.note}))};
+    return {enabled:true,rules:c.rules,normalDraws:c.normalDraws,sDraws:c.sDraws,maxUnredeemedTickets:c.maxUnredeemedTickets,prizes:c.prizes.map(p=>({id:p.id,name:p.name,imageUrl:p.imageUrl,remainingQuantity:p.remainingQuantity,probability:p.probability,note:p.note,redemptionDeadline:p.redemptionDeadline}))};
   }
 
   function writeConfig(input){
@@ -73,7 +83,8 @@ module.exports=function createLotteryService(dataDir){
         totalQuantity:total,
         remainingQuantity:Math.max(0,Math.min(total,Math.floor(Number(remainingInput)||0))),
         probability:Math.round(Math.max(0,Math.min(100,Number(p.probability)||0))*10000)/10000,
-        note:cleanText(p.note,300)
+        note:cleanText(p.note,300),
+        redemptionDeadline:cleanDeadline(p.redemptionDeadline!=null?p.redemptionDeadline:(previous&&previous.redemptionDeadline))
       };
     });
     const probabilityTotal=prizes.reduce((s,p)=>s+p.probability,0);
@@ -109,8 +120,10 @@ module.exports=function createLotteryService(dataDir){
     if(!best['1']&&!best[1])total+=Math.max(0,Number(s.stage1Best)||0);
     return Math.floor(total);
   }
-  function ticketPublic(t){
-    return {id:t.id,code:t.code,prizeId:t.prizeId,prizeName:t.prizeName,imageUrl:t.imageUrl||'',note:t.note||'',debug:!!t.debug,invalid:!!t.debug,redeemed:!!t.redeemed,createdAt:t.createdAt||0,redeemedAt:t.redeemedAt||0};
+  function ticketPublic(t,cfg){
+    const live=(cfg||getConfig()).prizes.find(p=>p.id===t.prizeId);
+    const redemptionDeadline=(live&&live.redemptionDeadline)||t.redemptionDeadline||'';
+    return {id:t.id,code:t.code,prizeId:t.prizeId,prizeName:t.prizeName,imageUrl:t.imageUrl||'',note:t.note||'',redemptionDeadline,expired:deadlineExpired(redemptionDeadline),debug:!!t.debug,invalid:!!t.debug,redeemed:!!t.redeemed,createdAt:t.createdAt||0,redeemedAt:t.redeemedAt||0};
   }
   function status(args){
     const a=args||{},cfg=getConfig(),state=readState(),userId=String(a.userId||''),save=a.save||{},score=scoreOf(save),grade=score>=21000?'S':score>=18000?'A':score>=15000?'B':score>=12000?'C':score>=8000?'D':'E';
@@ -121,7 +134,7 @@ module.exports=function createLotteryService(dataDir){
     return Object.assign(publicConfig(),{
       profileReady,completed,grade,score,drawsAllowed:allowed,drawsUsed:used,
       drawsRemaining:cfg.enabled&&profileReady&&completed&&formalCount<5&&pendingCount<cfg.maxUnredeemedTickets?Math.max(0,allowed-used):0,
-      prizeLimit:5,prizeCount:formalCount,pendingPrizeCount:pendingCount,maxUnredeemedTickets:cfg.maxUnredeemedTickets,pendingLimitReached:pendingCount>=cfg.maxUnredeemedTickets,debugMode,debugUnlimited:!!(cfg.enabled&&debugMode),tickets:tickets.map(ticketPublic)
+      prizeLimit:5,prizeCount:formalCount,pendingPrizeCount:pendingCount,maxUnredeemedTickets:cfg.maxUnredeemedTickets,pendingLimitReached:pendingCount>=cfg.maxUnredeemedTickets,debugMode,debugUnlimited:!!(cfg.enabled&&debugMode),tickets:tickets.map(t=>ticketPublic(t,cfg))
     });
   }
   function uniqueCode(state){
@@ -154,12 +167,15 @@ module.exports=function createLotteryService(dataDir){
     }
     let ticket=null;
     if(prize){
-      ticket={id:'ticket_'+Date.now().toString(36)+'_'+crypto.randomBytes(4).toString('hex'),code:uniqueCode(state),userId,prizeId:prize.id,prizeName:prize.name,imageUrl:prize.imageUrl||'',note:prize.note||'',debug,redeemed:false,createdAt:Date.now(),redeemedAt:0};
+      ticket={id:'ticket_'+Date.now().toString(36)+'_'+crypto.randomBytes(4).toString('hex'),code:uniqueCode(state),userId,prizeId:prize.id,prizeName:prize.name,imageUrl:prize.imageUrl||'',note:prize.note||'',redemptionDeadline:prize.redemptionDeadline||'',debug,redeemed:false,createdAt:Date.now(),redeemedAt:0};
       state.tickets.push(ticket);
+      // 每位玩家仅保留最新 20 条奖券；超出的历史记录自动清理。
+      const own=state.tickets.filter(t=>String(t.userId)===userId).sort((a,b)=>Number(b.createdAt)-Number(a.createdAt));
+      if(own.length>20){const keep=new Set(own.slice(0,20).map(t=>t.id));state.tickets=state.tickets.filter(t=>String(t.userId)!==userId||keep.has(t.id));}
       if(!debug){const live=cfg.prizes.find(p=>p.id===prize.id);if(live){live.remainingQuantity=Math.max(0,live.remainingQuantity-1);cfg.updatedAt=Date.now();atomicWrite(CONFIG_FILE,cfg);}}
     }
     writeState(state);
-    return {ok:true,won:!!ticket,prize:ticket?{id:ticket.prizeId,name:ticket.prizeName,imageUrl:ticket.imageUrl,note:ticket.note}:null,ticket:ticket?ticketPublic(ticket):null,status:status(a)};
+    return {ok:true,won:!!ticket,prize:ticket?{id:ticket.prizeId,name:ticket.prizeName,imageUrl:ticket.imageUrl,note:ticket.note,redemptionDeadline:ticket.redemptionDeadline}:null,ticket:ticket?ticketPublic(ticket,cfg):null,status:status(a)};
   }
   function clearDebug(userId){
     const state=readState(),before=state.tickets.length;
@@ -168,15 +184,17 @@ module.exports=function createLotteryService(dataDir){
   }
   function findTicket(code){
     const state=readState(),ticket=state.tickets.find(t=>String(t.code)===String(code||'').trim());
-    return ticket?ticketPublic(ticket):null;
+    return ticket?ticketPublic(ticket,getConfig()):null;
   }
   function redeem(code,actor){
     const state=readState(),ticket=state.tickets.find(t=>String(t.code)===String(code||'').trim());
     if(!ticket)fail(404,'未找到该兑奖码');
     if(ticket.debug)fail(409,'调试奖券无效，不能核销');
+    const cfg=getConfig(),live=cfg.prizes.find(p=>p.id===ticket.prizeId),deadline=(live&&live.redemptionDeadline)||ticket.redemptionDeadline||'';
+    if(deadlineExpired(deadline))fail(409,`该奖券已超过兑奖截止日期（${deadline}）`);
     const alreadyRedeemed=!!ticket.redeemed;
     if(!alreadyRedeemed){ticket.redeemed=true;ticket.redeemedAt=Date.now();ticket.redeemedBy=actor||{id:'admin',name:'管理员'};writeState(state);}
-    return {ok:true,alreadyRedeemed,ticket:ticketPublic(ticket)};
+    return {ok:true,alreadyRedeemed,ticket:ticketPublic(ticket,cfg)};
   }
   function summary(){
     const s=readState(),formal=s.tickets.filter(t=>!t.debug),debug=s.tickets.filter(t=>t.debug);
