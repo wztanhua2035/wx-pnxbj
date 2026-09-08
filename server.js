@@ -358,7 +358,7 @@ async function handleSaveSync(req, res) {
 }
 
 function defaultRuntimeConfig() {
-  return { maintenanceMode: false, bgmVolume: 55, sfxVolume: 100, bgmSource: 'local', bgmTrackId: '', bgmUrl: '', debugModeEnabled: true, debugScoresEnabled: false, debugEntryCode: '9999', announcementEnabled: false, announcementTitle: '', announcementContent: '' };
+  return { maintenanceMode: false, bgmVolume: 55, sfxVolume: 100, bgmSource: 'local', bgmTrackId: '', bgmUrl: '', debugModeEnabled: true, debugScoresEnabled: false, debugEntryCode: '9999', announcementEnabled: false, announcementTitle: '', announcementContent: '', landmarkDescriptions: {} };
 }
 function readRuntimeConfig() {
   ensureJson(CONFIG_FILE, defaultRuntimeConfig);
@@ -387,6 +387,16 @@ function writeRuntimeConfig(input) {
   if (input.announcementEnabled != null) current.announcementEnabled = !!input.announcementEnabled;
   if (input.announcementTitle != null) current.announcementTitle = String(input.announcementTitle || '').trim().slice(0, 15);
   if (input.announcementContent != null) current.announcementContent = String(input.announcementContent || '').trim().slice(0, 120);
+  if (input.landmarkDescriptions != null) {
+    const raw = input.landmarkDescriptions && typeof input.landmarkDescriptions === 'object' ? input.landmarkDescriptions : {};
+    const cleaned = {};
+    Object.keys(raw).forEach((key) => {
+      if (!/^\d{1,3}$/.test(String(key))) return;
+      const value = String(raw[key] || '').trim().slice(0, 120);
+      if (value) cleaned[String(Number(key))] = value;
+    });
+    current.landmarkDescriptions = cleaned;
+  }
   atomicWrite(CONFIG_FILE, current);
   return current;
 }
