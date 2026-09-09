@@ -20,7 +20,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const VERSION = '5.55.0';
+const VERSION = '5.61.0';
 const PORT = Number(process.env.PORT || 3000);
 const APPID = String(process.env.WECHAT_APPID || '').trim();
 const APPSECRET = String(process.env.WECHAT_APPSECRET || '').trim();
@@ -29,6 +29,7 @@ const ADMIN_PASSWORD = String(process.env.PASSWORD || process.env.ADMIN_PASSWORD
 const DB_FILE = process.env.USER_DB_FILE || path.join(__dirname, 'data', 'auth', 'users.json');
 const inferredDataDir = path.dirname(path.dirname(DB_FILE));
 const DATA_DIR = process.env.MINIGAME_DATA_DIR || inferredDataDir || path.join(__dirname, 'data');
+const ADMIN_USERS_FILE = path.join(DATA_DIR, 'config', 'subadmins.json');
 const SAVE_DIR = path.join(DATA_DIR, 'saves');
 const CONFIG_FILE = path.join(DATA_DIR, 'config', 'runtime.json');
 const VISIT_FILE = path.join(DATA_DIR, 'stats', 'visits.json');
@@ -90,13 +91,13 @@ function readBody(req, limit = 320 * 1024) {
   });
 }
 
-function readRawBody(req, limit = 15 * 1024 * 1024) {
+function readRawBody(req, limit = 15 * 1024 * 1024, tooLargeMessage = '上传文件过大') {
   return new Promise((resolve, reject) => {
     const chunks = []; let size = 0; let failed = false;
     req.on('data', (chunk) => {
       if (failed) return;
       size += chunk.length;
-      if (size > limit) { failed = true; const err = new Error('音乐文件不能超过15MB'); err.status = 413; reject(err); return; }
+      if (size > limit) { failed = true; const err = new Error(tooLargeMessage); err.status = 413; reject(err); return; }
       chunks.push(chunk);
     });
     req.on('end', () => { if (!failed) resolve(Buffer.concat(chunks)); });
@@ -168,9 +169,9 @@ function fromBase64url(value) {
 function signPayload(payload) {
   return base64url(crypto.createHmac('sha256', TOKEN_SECRET).update(payload).digest());
 }
-function issueToken(userId, ttlMs = 30 * 24 * 3600 * 1000, role = 'user') {
+function issueToken(userId, ttlMs = 30 * 24 * 3600 * 1000, role = 'user', extra = {}) {
   const expiresAt = Date.now() + ttlMs;
-  const payload = base64url(JSON.stringify({ sub: userId, role, exp: expiresAt }));
+  const payload = base64url(JSON.stringify(Object.assign({ sub: userId, role, exp: expiresAt }, extra || {})));
   return { token: payload + '.' + signPayload(payload), expiresAt };
 }
 function verifyToken(token, role) {
@@ -207,6 +208,9 @@ function requireAdmin(req, res) {
   if (!p) { json(res, 401, { error: 'admin login required' }); return null; }
   return p;
 }
+function readSubAdmins(){ const v=readJson(ADMIN_USERS_FILE,[]); return Array.isArray(v)?v:[]; }
+function writeSubAdmins(v){ atomicWrite(ADMIN_USERS_FILE,Array.isArray(v)?v:[]); }
+function adminSection(req,res,section){ const p=requireAdmin(req,res); if(!p)return null; if(p.subAdmin && !((p.permissions||[]).includes(section)|| (p.permissions||[]).includes('*'))){json(res,403,{error:'该子管理员无权访问此模块'});return null;} return p; }
 function safeEqual(a, b) {
   const aa = Buffer.from(String(a || '')), bb = Buffer.from(String(b || ''));
   return aa.length === bb.length && crypto.timingSafeEqual(aa, bb);
@@ -558,8 +562,16 @@ function summarizeSave(save) {
 async function handleAdminLogin(req, res) {
   if (!ADMIN_PASSWORD) { json(res, 503, { error: 'admin password is not configured' }); return; }
   const body = await readBody(req, 16 * 1024);
+  const account=String(body.account||'admin').trim()||'admin';
+  if(account!=='admin'){
+    const hash=crypto.createHash('sha256').update(String(body.password||'')).digest('hex');
+    const staff=readSubAdmins().find(x=>x&&x.enabled!==false&&String(x.account)===account&&safeEqual(x.passwordHash,hash));
+    if(!staff){json(res,401,{error:'账号或密码错误'});return;}
+    const auth=issueToken('subadmin:'+account,8*3600*1000,'admin',{subAdmin:true,permissions:Array.isArray(staff.permissions)?staff.permissions:[]});
+    json(res,200,{ok:true,token:auth.token,expiresAt:auth.expiresAt,name:staff.name||account,subAdmin:true});return;
+  }
   if (!safeEqual(body.password, ADMIN_PASSWORD)) { json(res, 401, { error: '密码错误' }); return; }
-  const auth = issueToken('admin', 8 * 3600 * 1000, 'admin');
+  const auth = issueToken('admin', 8 * 3600 * 1000, 'admin', { subAdmin:false, permissions:['*'] });
   json(res, 200, { ok: true, token: auth.token, expiresAt: auth.expiresAt });
 }
 function adminPlayers(query) {
@@ -739,6 +751,16 @@ const server = http.createServer(async (req, res) => {
       json(res, 200, Object.assign({ users: users.length, saves, completed, active7d: users.filter((x) => now - Number(x.lastLoginAt || 0) <= 7 * 86400000).length, leaderboard: formalCount, version: VERSION }, lottery.summary())); return;
     }
     if (p === '/api/admin/players' && req.method === 'GET') { if (!requireAdmin(req, res)) return; json(res, 200, adminPlayers(Object.fromEntries(u.searchParams.entries()))); return; }
+    if (p === '/api/admin/players/export' && req.method === 'GET') {
+      if(!adminSection(req,res,'players'))return; const d=readUsersDb(); const rows=Object.values(d.usersByOpenid||{}).map(u=>{const rec=u&&u.userId?readSaveRecord(u.userId):null;return {userId:u.userId,displayName:publicProfile(u).displayName,avatarUrl:publicProfile(u).avatarUrl,createdAt:u.createdAt||0,lastLoginAt:u.lastLoginAt||0,appVersion:u.appVersion||'',progress:summarizeSave(rec&&rec.save),save:rec?rec.save:null};});
+      const out=Buffer.from(JSON.stringify({exportedAt:new Date().toISOString(),items:rows},null,2));res.writeHead(200,{'content-type':'application/json; charset=utf-8','content-disposition':'attachment; filename="ponan-players.json"','content-length':String(out.length)});res.end(out);return;
+    }
+    if (p === '/api/admin/players/delete' && req.method === 'POST') {
+      if(!adminSection(req,res,'players'))return; const body=await readBody(req,64*1024),ids=Array.isArray(body.userIds)?body.userIds.map(String).filter(x=>/^pn_[a-z0-9_-]{6,80}$/i.test(x)):[]; if(!ids.length){json(res,400,{error:'请选择要删除的玩家'});return;} const db=readUsersDb(); let removed=0; for(const id of ids){const found=findUserById(db,id);if(found){delete db.usersByOpenid[found.openid];removed++;} try{fs.unlinkSync(saveFileFor(id));}catch(_){}} writeUsersDb(db);json(res,200,{ok:true,removed});return;
+    }
+    if (p === '/api/admin/subadmins' && req.method === 'GET') { const a=adminSection(req,res,'admins');if(!a||a.subAdmin)return;json(res,200,{items:readSubAdmins().map(x=>Object.assign({},x,{passwordHash:undefined}))});return; }
+    if (p === '/api/admin/subadmins' && req.method === 'POST') { const a=adminSection(req,res,'admins');if(!a||a.subAdmin)return;const b=await readBody(req,16*1024),account=String(b.account||'').trim();if(!/^[A-Za-z0-9_-]{3,30}$/.test(account)||account==='admin') {json(res,400,{error:'账号需为3-30位字母数字'});return;}if(!String(b.password||'')||String(b.password).length<6){json(res,400,{error:'密码至少6位'});return;}const list=readSubAdmins().filter(x=>x.account!==account);list.push({account,name:String(b.name||account).trim().slice(0,30),phone:String(b.phone||'').trim().slice(0,30),permissions:Array.isArray(b.permissions)?b.permissions.map(String).slice(0,20):[],passwordHash:crypto.createHash('sha256').update(String(b.password)).digest('hex'),enabled:true,updatedAt:Date.now()});writeSubAdmins(list);json(res,200,{ok:true});return; }
+    if (p === '/api/admin/subadmins/delete' && req.method === 'POST') { const a=adminSection(req,res,'admins');if(!a||a.subAdmin)return;const b=await readBody(req,4096),account=String(b.account||'');writeSubAdmins(readSubAdmins().filter(x=>x.account!==account));json(res,200,{ok:true});return; }
     if (p === '/api/admin/player' && req.method === 'GET') {
       if (!requireAdmin(req, res)) return;
       const userId = String(u.searchParams.get('userId') || '');
@@ -747,8 +769,8 @@ const server = http.createServer(async (req, res) => {
       const rec = readSaveRecord(userId);
       json(res, 200, { user: { userId: found.user.userId, displayName: publicProfile(found.user).displayName, avatarUrl: publicProfile(found.user).avatarUrl, createdAt: found.user.createdAt || 0, lastLoginAt: found.user.lastLoginAt || 0, appVersion: found.user.appVersion || '', lastDeviceId: found.user.lastDeviceId || '', lastSaveAt: found.user.lastSaveAt || 0 }, progress: summarizeSave(rec && rec.save), leaderboard: leaderboardEntryFor(userId), save: rec ? rec.save : null, serverUpdatedAt: rec ? rec.serverUpdatedAt : 0 }); return;
     }
-    if (p === '/api/admin/config' && req.method === 'GET') { if (!requireAdmin(req, res)) return; json(res, 200, readRuntimeConfig()); return; }
-    if (p === '/api/admin/config' && (req.method === 'PUT' || req.method === 'POST')) { if (!requireAdmin(req, res)) return; json(res, 200, writeRuntimeConfig(await readBody(req, 24 * 1024))); return; }
+    if (p === '/api/admin/config' && req.method === 'GET') { if (!adminSection(req, res, 'materials')) return; json(res, 200, readRuntimeConfig()); return; }
+    if (p === '/api/admin/config' && (req.method === 'PUT' || req.method === 'POST')) { if (!adminSection(req, res, 'materials')) return; json(res, 200, writeRuntimeConfig(await readBody(req, 24 * 1024))); return; }
     if (p === '/api/admin/bgm' && req.method === 'GET') { if (!requireAdmin(req, res)) return; json(res, 200, { items: bgmStore.list() }); return; }
     if (p === '/api/admin/bgm/upload' && req.method === 'POST') {
       if (!requireAdmin(req, res)) return;
@@ -761,8 +783,8 @@ const server = http.createServer(async (req, res) => {
       if (cfg.bgmSource === 'uploaded' && cfg.bgmTrackId === id) { json(res, 409, { error: '这首音乐正在使用，请先切换背景音乐并保存' }); return; }
       json(res, 200, { ok: true, removed: bgmStore.remove(id) }); return;
     }
-    if (p === '/api/admin/lottery/config' && req.method === 'GET') { if (!requireAdmin(req, res)) return; json(res, 200, lottery.getConfig()); return; }
-    if (p === '/api/admin/lottery/config' && (req.method === 'PUT' || req.method === 'POST')) { if (!requireAdmin(req, res)) return; json(res, 200, lottery.writeConfig(await readBody(req, 96 * 1024))); return; }
+    if (p === '/api/admin/lottery/config' && req.method === 'GET') { if (!adminSection(req,res,'lottery')) return; json(res, 200, lottery.getConfig()); return; }
+    if (p === '/api/admin/lottery/config' && (req.method === 'PUT' || req.method === 'POST')) { if (!adminSection(req,res,'lottery')) return; json(res, 200, lottery.writeConfig(await readBody(req, 96 * 1024))); return; }
     if (p === '/api/admin/lottery/ticket' && req.method === 'GET') {
       if (!requireAdmin(req, res)) return;const code=String(u.searchParams.get('code')||'').trim();
       if(!/^\d{8}$/.test(code)){json(res,400,{error:'请输入8位兑奖码'});return;}
@@ -772,13 +794,15 @@ const server = http.createServer(async (req, res) => {
       if (!requireAdmin(req, res)) return;const body=await readBody(req,12*1024),code=String(body.code||'').trim();
       if(!/^\d{8}$/.test(code)){json(res,400,{error:'请输入8位兑奖码'});return;}json(res,200,lottery.redeem(code));return;
     }
+    if (p === '/api/admin/lottery/prize-image' && req.method === 'POST') { if(!adminSection(req,res,'lottery'))return; const prizeId=String(req.headers['x-prize-id']||'').trim(); if(!prizeId){json(res,400,{error:'缺少奖项ID'});return;} const type=String(req.headers['content-type']||'').toLowerCase(); if(!['image/png','image/jpeg','image/jpg'].includes(type)){json(res,400,{error:'仅支持PNG或JPG图片'});return;} const data=await readRawBody(req,1024*1024,'奖项图片不能超过1MB'); const ext=type==='image/png'?'png':'jpg',file=path.join(DATA_DIR,'lottery','images',prizeId+'.'+ext);ensureDir(file);fs.writeFileSync(file,data);json(res,200,{ok:true,imageUrl:'/media/lottery/'+encodeURIComponent(prizeId+'.'+ext)});return; }
+    if ((req.method==='GET'||req.method==='HEAD') && p.startsWith('/media/lottery/')) { const name=decodeURIComponent(p.slice('/media/lottery/'.length)); if(!/^[A-Za-z0-9_-]{1,80}\.(png|jpg)$/i.test(name)){json(res,400,{error:'invalid image'});return;} const file=path.join(DATA_DIR,'lottery','images',name);if(!fs.existsSync(file)){json(res,404,{error:'image not found'});return;}const st=fs.statSync(file);res.writeHead(200,{'content-type':name.toLowerCase().endsWith('.png')?'image/png':'image/jpeg','content-length':String(st.size),'cache-control':'public,max-age=86400'});if(req.method!=='HEAD')fs.createReadStream(file).pipe(res);else res.end();return; }
     if (p === '/api/admin/leaderboard' && req.method === 'GET') {
-      if (!requireAdmin(req, res)) return;
+      if (!adminSection(req, res, 'leaderboard')) return;
       const sorted = sortedEntries(readLeaderboard().entries).slice(0, 200).map((x, i) => Object.assign({ rank: i + 1, durationText: durationText(x.durationMs) }, x));
       json(res, 200, { items: sorted, total: sorted.length }); return;
     }
     if (p === '/api/admin/leaderboard/remove' && req.method === 'POST') {
-      if (!requireAdmin(req, res)) return;
+      if (!adminSection(req, res, 'leaderboard')) return;
       const body = await readBody(req, 12 * 1024), userId = String(body.userId || '').trim();
       if (!userId) { json(res, 400, { error: 'userId is required' }); return; }
       json(res, 200, { ok: true, removed: removeLeaderboardEntry(userId) }); return;

@@ -34,9 +34,9 @@
         <textarea id="rules" maxlength="5000" placeholder="填写玩家在“规则”页面看到的内容"></textarea>
       </section>
 
-    <section class="card">
-        <div class="row space"><div><h2>奖项设置</h2><p class="sub">图片填写可公开访问的 HTTPS 地址；概率合计不得超过100%，剩余概率为“谢谢参与”。可为每项奖品设置兑奖截止日期。</p></div><button class="gold" id="addPrizeBtn">新增奖项</button></div>
-        <div class="table-wrap"><table><thead><tr><th>奖项名称</th><th>图片地址</th><th>总数量</th><th>剩余数量</th><th>中奖概率%</th><th>兑奖截止日期</th><th>备注</th><th>操作</th></tr></thead><tbody id="prizeRows"></tbody></table></div>
+      <section class="card">
+        <div class="row space"><div><h2>奖项设置</h2><p class="sub">图片填写可公开访问的 HTTPS 地址；概率合计不得超过100%，剩余概率为“谢谢参与”。</p></div><button class="gold" id="addPrizeBtn">新增奖项</button></div>
+        <div class="table-wrap"><table><thead><tr><th>奖项名称</th><th>图片地址</th><th>总数量</th><th>剩余数量</th><th>中奖概率%</th><th>备注</th><th>操作</th></tr></thead><tbody id="prizeRows"></tbody></table></div>
         <div class="row" style="margin-top:16px"><button id="saveBtn">保存全部设置</button><span id="saveMsg" class="message"></span></div>
       </section>
 
@@ -61,13 +61,15 @@ if(window.parent!==window)document.body.classList.add('integrated');
     function input(cls,type,value){const el=document.createElement(type==='textarea'?'textarea':'input');el.className=cls;if(type!=='textarea')el.type=type;el.value=value==null?'':value;return el}
     function addPrize(p){
       p=p||{};const tr=document.createElement('tr');tr.dataset.id=p.id||('prize_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,7));
-      const fields=[input('name','text',p.name),input('url','url',p.imageUrl),input('num','number',p.totalQuantity||0),input('num','number',p.remainingQuantity||0),input('num probability','number',p.probability||0),input('deadline','date',p.redemptionDeadline),input('note','text',p.note)];
+      const fields=[input('name','text',p.name),input('url','url',p.imageUrl),input('num','number',p.totalQuantity||0),input('num','number',p.remainingQuantity||0),input('num probability','number',p.probability||0),input('note','text',p.note)];
+      const imageFile=document.createElement('input');imageFile.type='file';imageFile.accept='image/png,image/jpeg,.png,.jpg';imageFile.title='PNG/JPG，最大1MB';const imageTd=document.createElement('td');imageTd.appendChild(imageFile);
       fields[2].min=fields[3].min=fields[4].min='0';fields[4].max='100';fields[4].step='0.0001';
-      fields.forEach(el=>{const td=document.createElement('td');td.appendChild(el);tr.appendChild(td)});
+      fields.forEach(el=>{const td=document.createElement('td');td.appendChild(el);tr.appendChild(td)});tr.appendChild(imageTd);imageFile.onchange=()=>uploadPrizeImage(tr,imageFile);
       const td=document.createElement('td'),del=document.createElement('button');del.textContent='删除';del.className='danger mini';del.onclick=()=>{tr.remove();calcProbability()};td.appendChild(del);tr.appendChild(td);$('prizeRows').appendChild(tr);fields[4].addEventListener('input',calcProbability);calcProbability();
     }
+    async function uploadPrizeImage(tr,fileInput){const f=fileInput.files&&fileInput.files[0];if(!f)return;if(f.size>1024*1024){alert('奖项图片不能超过1MB');fileInput.value='';return}if(!/^image\/(png|jpeg)$/.test(f.type)){alert('仅支持PNG或JPG图片');fileInput.value='';return}try{const r=await fetch('/api/admin/lottery/prize-image',{method:'POST',headers:{Authorization:'Bearer '+token,'content-type':f.type,'x-prize-id':tr.dataset.id},body:f});const d=await r.json();if(!r.ok)throw new Error(d.error||'上传失败');tr.querySelector('.url').value=d.imageUrl;alert('奖项图片已上传，请保存设置')}catch(e){alert(e.message)}}
     function calcProbability(){const n=[...document.querySelectorAll('.probability')].reduce((s,x)=>s+(Number(x.value)||0),0);$('probabilityTotal').textContent='概率合计：'+Math.round(n*10000)/10000+'%';$('probabilityTotal').style.color=n>100?'#9f3f35':'#7f6c57'}
-    function collectPrizes(){return [...$('prizeRows').querySelectorAll('tr')].map(tr=>{const x=tr.querySelectorAll('input');return{id:tr.dataset.id,name:x[0].value,imageUrl:x[1].value,totalQuantity:Number(x[2].value)||0,remainingQuantity:Number(x[3].value)||0,probability:Number(x[4].value)||0,redemptionDeadline:x[5].value,note:x[6].value}})}
+    function collectPrizes(){return [...$('prizeRows').querySelectorAll('tr')].map(tr=>{const x=tr.querySelectorAll('input');return{id:tr.dataset.id,name:x[0].value,imageUrl:x[1].value,totalQuantity:Number(x[2].value)||0,remainingQuantity:Number(x[3].value)||0,probability:Number(x[4].value)||0,note:x[5].value}})}
     async function load(){
       try{const c=await api('/api/admin/lottery/config');$('enabled').checked=!!c.enabled;$('rules').value=c.rules||'';$('normalDraws').value=c.normalDraws==null?1:c.normalDraws;$('sDraws').value=c.sDraws==null?2:c.sDraws;$('maxUnredeemedTickets').value=c.maxUnredeemedTickets==null?5:c.maxUnredeemedTickets;$('prizeRows').textContent='';(c.prizes||[]).forEach(addPrize);showApp(true)}catch(e){if(e.status===401){token='';localStorage.removeItem(tokenKey);showApp(false)}else{$('loginMsg').textContent=e.message}}
     }
@@ -77,7 +79,7 @@ if(window.parent!==window)document.body.classList.add('integrated');
     $('addPrizeBtn').onclick=()=>addPrize({});
     $('saveBtn').onclick=async()=>{const msg=$('saveMsg');msg.className='message';msg.textContent='正在保存…';try{await api('/api/admin/lottery/config',{method:'PUT',body:JSON.stringify({enabled:$('enabled').checked,normalDraws:Number($('normalDraws').value),sDraws:Number($('sDraws').value),maxUnredeemedTickets:Number($('maxUnredeemedTickets').value),rules:$('rules').value,prizes:collectPrizes()})});msg.className='message ok';msg.textContent='设置已保存并立即生效';await load()}catch(e){msg.textContent=e.message}};
     $('queryBtn').onclick=async()=>{const msg=$('ticketMsg'),box=$('ticketBox');msg.textContent='';box.classList.add('hidden');currentTicket=null;try{const r=await api('/api/admin/lottery/ticket?code='+encodeURIComponent($('code').value.trim()));currentTicket=r.ticket;renderTicket()}catch(e){msg.textContent=e.message}};
-    function renderTicket(){const t=currentTicket,box=$('ticketBox');box.textContent='';if(!t)return;const title=document.createElement('div'),meta=document.createElement('p'),stamp=document.createElement('span');title.innerHTML='<strong></strong>';title.querySelector('strong').textContent=t.prizeName+' · '+t.code;meta.textContent='获得时间：'+new Date(t.createdAt).toLocaleString()+(t.redemptionDeadline?' · 兑奖截止：'+t.redemptionDeadline:'')+(t.note?' · '+t.note:'');box.append(title,meta);if(t.debug){stamp.className='stamp';stamp.textContent='无效';box.appendChild(stamp)}else if(t.redeemed){stamp.className='stamp';stamp.textContent='已领';box.appendChild(stamp)}else if(t.expired){stamp.className='stamp';stamp.textContent='已截止';box.appendChild(stamp)}else{const b=document.createElement('button');b.textContent='确认核销';b.onclick=redeem;box.appendChild(b)}box.classList.remove('hidden')}
+    function renderTicket(){const t=currentTicket,box=$('ticketBox');box.textContent='';if(!t)return;const title=document.createElement('div'),meta=document.createElement('p'),stamp=document.createElement('span');title.innerHTML='<strong></strong>';title.querySelector('strong').textContent=t.prizeName+' · '+t.code;meta.textContent='获得时间：'+new Date(t.createdAt).toLocaleString()+(t.note?' · '+t.note:'');box.append(title,meta);if(t.debug){stamp.className='stamp';stamp.textContent='无效';box.appendChild(stamp)}else if(t.redeemed){stamp.className='stamp';stamp.textContent='已领';box.appendChild(stamp)}else{const b=document.createElement('button');b.textContent='确认核销';b.onclick=redeem;box.appendChild(b)}box.classList.remove('hidden')}
     async function redeem(){if(!currentTicket||!confirm('确认玩家已经领取“'+currentTicket.prizeName+'”吗？'))return;try{const r=await api('/api/admin/lottery/redeem',{method:'POST',body:JSON.stringify({code:currentTicket.code})});currentTicket=r.ticket;renderTicket();$('ticketMsg').className='message ok';$('ticketMsg').textContent='核销成功'}catch(e){$('ticketMsg').className='message';$('ticketMsg').textContent=e.message}}
     if(token)load();else showApp(false);
   </script>
