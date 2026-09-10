@@ -20,7 +20,7 @@ function fail(status,message){const e=new Error(message);e.status=status;throw e
 function cleanText(v,max){return String(v==null?'':v).replace(/[\r\t]/g,' ').trim().slice(0,max);}
 function cleanImage(v){const s=cleanText(v,800);return /^https:\/\//i.test(s)||/^\/media\/lottery\/[A-Za-z0-9_-]+\.(?:png|jpg)$/i.test(s)?s:'';}
 function randomId(prefix){return (prefix||'id')+'_'+Date.now().toString(36)+'_'+crypto.randomBytes(3).toString('hex');}
-function toTime(v){if(v==null||v==='')return 0;const n=Number(v);if(Number.isFinite(n)&&n>0)return Math.floor(n);const t=Date.parse(String(v));return Number.isFinite(t)?t:0;}
+function toTime(v){if(v==null||v==='')return 0;const n=Number(v);if(Number.isFinite(n))return n>0?Math.floor(n):0;const t=Date.parse(String(v));return Number.isFinite(t)&&t>0?t:0;}
 
 module.exports=function createLotteryService(dataDir){
   const CONFIG_FILE=path.join(dataDir,'lottery','config.json');
