@@ -784,7 +784,7 @@ const server = http.createServer(async (req, res) => {
       json(res, 200, { ok: true, removed: bgmStore.remove(id) }); return;
     }
     if (p === '/api/admin/lottery/config' && req.method === 'GET') { if (!adminSection(req,res,'lottery')) return; json(res, 200, lottery.getConfig()); return; }
-    if (p === '/api/admin/lottery/config' && (req.method === 'PUT' || req.method === 'POST')) { if (!adminSection(req,res,'lottery')) return; json(res, 200, lottery.writeConfig(await readBody(req, 96 * 1024))); return; }
+    if (p === '/api/admin/lottery/config' && (req.method === 'PUT' || req.method === 'POST')) { if (!adminSection(req,res,'lottery')) return; json(res, 200, lottery.writeConfig(await readBody(req, 512 * 1024))); return; }
     if (p === '/api/admin/lottery/ticket' && req.method === 'GET') {
       if (!requireAdmin(req, res)) return;const code=String(u.searchParams.get('code')||'').trim();
       if(!/^\d{8}$/.test(code)){json(res,400,{error:'请输入8位兑奖码'});return;}
