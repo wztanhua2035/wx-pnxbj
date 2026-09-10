@@ -53,7 +53,7 @@
 </div>
 <script>
 if(window.parent!==window)document.body.classList.add('integrated');
-const tokenKey='ponan_admin_token';let token=sessionStorage.getItem('pn_admin_token')||(window.parent===window?localStorage.getItem(tokenKey):'')||'',config={enabled:false,activeProjectId:'',projects:[]},selectedId='',currentTicket=null;
+const tokenKey='ponan_admin_token';let token='';try{token=sessionStorage.getItem('pn_admin_token')||'';if(!token&&window.parent!==window)token=window.parent.sessionStorage.getItem('pn_admin_token')||'';if(!token&&window.parent===window)token=localStorage.getItem(tokenKey)||'';}catch(e){}let config={enabled:false,activeProjectId:'',projects:[]},selectedId='',currentTicket=null;
 const $=id=>document.getElementById(id);
 async function api(path,options){const o=Object.assign({method:'GET'},options||{});o.headers=Object.assign({'content-type':'application/json'},token?{Authorization:'Bearer '+token}:{},o.headers||{});const r=await fetch(path,o),data=await r.json().catch(()=>({}));if(!r.ok){if(r.status===401&&window.parent!==window)window.parent.postMessage('ponan-admin-expired',location.origin);const e=new Error(data.error||('HTTP '+r.status));e.status=r.status;throw e}return data}
 function showApp(on){$('login').classList.toggle('hidden',on);$('app').classList.toggle('hidden',!on)}
@@ -79,6 +79,7 @@ $('saveBtn').onclick=async()=>{syncCurrentProject();config.enabled=$('enabled').
 $('queryBtn').onclick=async()=>{const msg=$('ticketMsg'),box=$('ticketBox');msg.textContent='';box.classList.add('hidden');currentTicket=null;try{const r=await api('/api/admin/lottery/ticket?code='+encodeURIComponent($('code').value.trim()));currentTicket=r.ticket;renderTicket()}catch(e){msg.textContent=e.message}};
 function renderTicket(){const t=currentTicket,box=$('ticketBox');box.textContent='';if(!t)return;const title=document.createElement('div'),meta=document.createElement('p'),stamp=document.createElement('span');title.innerHTML='<strong></strong>';title.querySelector('strong').textContent=t.prizeName+' · '+t.code;meta.textContent=(t.projectName?'活动：'+t.projectName+' · ':'')+'获得时间：'+new Date(t.createdAt).toLocaleString()+(t.note?' · '+t.note:'');box.append(title,meta);if(t.debug){stamp.className='stamp';stamp.textContent='无效';box.appendChild(stamp)}else if(t.redeemed){stamp.className='stamp';stamp.textContent='已领';box.appendChild(stamp)}else{const b=document.createElement('button');b.textContent='确认核销';b.onclick=redeem;box.appendChild(b)}box.classList.remove('hidden')}
 async function redeem(){if(!currentTicket||!confirm('确认玩家已经领取“'+currentTicket.prizeName+'”吗？'))return;try{const r=await api('/api/admin/lottery/redeem',{method:'POST',body:JSON.stringify({code:currentTicket.code})});currentTicket=r.ticket;renderTicket();$('ticketMsg').className='message ok';$('ticketMsg').textContent='核销成功'}catch(e){$('ticketMsg').className='message';$('ticketMsg').textContent=e.message}}
-if(token)load();else showApp(false);
+window.addEventListener('message',e=>{if(e.origin!==location.origin||!e.data||e.data.type!=='ponan-admin-token')return;token=String(e.data.token||'');if(token)load();else showApp(false)});
+if(token)load();else if(window.parent!==window){showApp(true);try{window.parent.postMessage('ponan-admin-token-request',location.origin)}catch(e){}}else showApp(false);
 </script>
 </body></html>

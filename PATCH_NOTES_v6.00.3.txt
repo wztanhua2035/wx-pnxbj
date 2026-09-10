@@ -1,0 +1,21 @@
+《坡南寻宝记》v6.00.3 后台“抽奖管理”空白页修复
+
+本次只修改后台抽奖管理页面的加载与管理员登录凭证传递，不改抽奖规则、奖品数据、玩家数据和其他后台模块。
+
+问题原因：
+1. “抽奖管理”在后台主页面中通过 iframe 嵌入 /admin/lottery。
+2. 主后台登录凭证保存在父页面 sessionStorage 中，而嵌入页此前只读取自身凭证；部分浏览器/部署环境下无法正确取得 token，导致抽奖页无法加载数据。
+3. v6.00.2 登录专项增量包未包含 public/admin/lottery.html；若部署时目录被重新整理或文件未保留，服务器虽然保留了 /admin/lottery 路由，但实际页面文件可能缺失。
+
+本次修复：
+- public/admin/index.html：增加父页面与抽奖 iframe 的管理员 token 同步桥接。
+- public/admin/lottery.html：优先读取父页面 sessionStorage，并支持 postMessage 接收当前管理员 token。
+- 同时把完整 lottery.html 纳入增量包，确保部署后 /admin/lottery 页面文件实际存在。
+- 登录失效仍会通知父后台统一退出，不降低管理员权限验证。
+
+部署方法：
+按原目录覆盖以下两个文件并重新部署：
+- public/admin/index.html
+- public/admin/lottery.html
+
+部署后建议浏览器 Ctrl+F5 强制刷新后台页面，再进入“抽奖管理”。
