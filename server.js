@@ -20,7 +20,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const VERSION = '5.61.0';
+const VERSION = '6.00.1';
 const PORT = Number(process.env.PORT || 3000);
 const APPID = String(process.env.WECHAT_APPID || '').trim();
 const APPSECRET = String(process.env.WECHAT_APPSECRET || '').trim();
@@ -166,19 +166,40 @@ function fromBase64url(value) {
   while (s.length % 4) s += '=';
   return Buffer.from(s, 'base64');
 }
-function signPayload(payload) {
-  return base64url(crypto.createHmac('sha256', TOKEN_SECRET).update(payload).digest());
+// v6.00.1：管理员登录令牌与玩家微信登录令牌分离。
+// 玩家/核销员仍严格使用 AUTH_TOKEN_SECRET；管理员在该变量缺失或不足24位时，
+// 使用由后台密码派生的专用 HMAC 密钥，避免出现“密码正确 -> token签发 -> token立即被判无效”的死循环。
+// 这样不会放宽玩家鉴权，也不需要临时关闭管理员 token 校验。
+function signingSecretForRole(role) {
+  if (String(role || '') === 'admin') {
+    if (TOKEN_SECRET && TOKEN_SECRET.length >= 24) return TOKEN_SECRET;
+    if (!ADMIN_PASSWORD) return '';
+    return crypto.createHash('sha256')
+      .update('ponan-admin-token-v6.00.1\n' + ADMIN_PASSWORD + '\n' + (APPID || 'no-appid'))
+      .digest('hex');
+  }
+  return TOKEN_SECRET && TOKEN_SECRET.length >= 24 ? TOKEN_SECRET : '';
+}
+function signPayload(payload, role) {
+  const secret = signingSecretForRole(role);
+  if (!secret) return '';
+  return base64url(crypto.createHmac('sha256', secret).update(payload).digest());
 }
 function issueToken(userId, ttlMs = 30 * 24 * 3600 * 1000, role = 'user', extra = {}) {
   const expiresAt = Date.now() + ttlMs;
   const payload = base64url(JSON.stringify(Object.assign({ sub: userId, role, exp: expiresAt }, extra || {})));
-  return { token: payload + '.' + signPayload(payload), expiresAt };
+  const signature = signPayload(payload, role);
+  if (!signature) return { token: '', expiresAt };
+  return { token: payload + '.' + signature, expiresAt };
 }
 function verifyToken(token, role) {
-  if (!TOKEN_SECRET || TOKEN_SECRET.length < 24) return null;
+  const secret = signingSecretForRole(role);
+  if (!secret) return null;
   const parts = String(token || '').split('.');
   if (parts.length !== 2) return null;
-  const expected = Buffer.from(signPayload(parts[0]));
+  const signature = signPayload(parts[0], role);
+  if (!signature) return null;
+  const expected = Buffer.from(signature);
   const got = Buffer.from(parts[1]);
   if (expected.length !== got.length || !crypto.timingSafeEqual(expected, got)) return null;
   try {
@@ -640,7 +661,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && p === '/health') {
-      json(res, 200, { ok: true, service: 'ponan-wechat-minigame', version: VERSION, authConfigured: !!(APPID && APPSECRET && TOKEN_SECRET.length >= 24), adminConfigured: !!ADMIN_PASSWORD }); return;
+      json(res, 200, { ok: true, service: 'ponan-wechat-minigame', version: VERSION, authConfigured: !!(APPID && APPSECRET && TOKEN_SECRET.length >= 24), adminConfigured: !!ADMIN_PASSWORD, adminTokenConfigured: !!signingSecretForRole('admin') }); return;
     }
     if (req.method === 'GET' && (p === '/admin' || p === '/admin/')) { serveAdmin(res); return; }
     if (req.method === 'GET' && (p === '/admin/lottery' || p === '/admin/lottery/')) { serveLotteryAdmin(res); return; }

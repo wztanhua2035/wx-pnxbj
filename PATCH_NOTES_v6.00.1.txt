@@ -1,0 +1,27 @@
+《坡南寻宝记》v6.00.1 后台登录专项修复
+
+本轮只修改后台管理员登录 / Token 校验，不修改抽奖项目、玩家数据、关卡、游戏端或其他后台页面。
+
+修复原因：
+此前管理员密码校验成功后会正常签发 admin token，但 verifyToken() 又统一要求 AUTH_TOKEN_SECRET 至少24位。
+如果 Zeabur 的 AUTH_TOKEN_SECRET 缺失或长度不足，就会形成：
+“密码正确 -> 登录接口返回成功 -> 新 token 立即验证失败 -> 页面提示登录状态已失效，请重新登录”。
+
+本次修复：
+1. 玩家与核销员鉴权规则保持不变，仍严格要求 AUTH_TOKEN_SECRET 至少24位。
+2. 管理员 token 单独处理：
+   - AUTH_TOKEN_SECRET 合格时，继续使用原密钥，行为完全不变；
+   - AUTH_TOKEN_SECRET 缺失或不足24位时，使用后台管理员密码派生专用 HMAC 密钥；
+   - 不取消 token 签名、不降低管理员接口鉴权要求。
+3. /health 新增 adminTokenConfigured 字段，方便检查管理员 token 是否可正常签发和验证。
+4. 服务版本标识更新为 6.00.1。
+
+验证：
+- 已模拟 PASSWORD 正确、AUTH_TOKEN_SECRET 为空的情况；
+- /api/admin/login 返回有效 token；
+- 随后携带该 token 请求 /api/admin/summary 返回 HTTP 200；
+- JS 语法检查通过。
+
+部署：
+把 server.js 覆盖到当前 Zeabur 后台项目根目录后重新部署服务。
+部署后原管理员登录状态可能需要重新登录一次，这是正常现象。
