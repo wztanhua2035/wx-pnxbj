@@ -20,7 +20,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const VERSION = '6.00.4';
+const VERSION = '6.00.5';
 const PORT = Number(process.env.PORT || 3000);
 const APPID = String(process.env.WECHAT_APPID || '').trim();
 const APPSECRET = String(process.env.WECHAT_APPSECRET || '').trim();

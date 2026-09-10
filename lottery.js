@@ -21,6 +21,9 @@ function cleanText(v,max){return String(v==null?'':v).replace(/[\r\t]/g,' ').tri
 function cleanImage(v){const s=cleanText(v,800);return /^https:\/\//i.test(s)||/^\/media\/lottery\/[A-Za-z0-9_-]+\.(?:png|jpg)$/i.test(s)?s:'';}
 function randomId(prefix){return (prefix||'id')+'_'+Date.now().toString(36)+'_'+crypto.randomBytes(3).toString('hex');}
 function toTime(v){if(v==null||v==='')return 0;const n=Number(v);if(Number.isFinite(n))return n>0?Math.floor(n):0;const t=Date.parse(String(v));return Number.isFinite(t)&&t>0?t:0;}
+function cleanDate(v){const s=cleanText(v,20);return /^\d{4}-\d{2}-\d{2}$/.test(s)?s:'';}
+function redeemDeadlineMs(date){const s=cleanDate(date);if(!s)return 0;const t=Date.parse(s+'T23:59:59.999+08:00');return Number.isFinite(t)?t:0;}
+function isExpiredDate(date,at){const t=redeemDeadlineMs(date);return !!(t&&Number(at||Date.now())>t);}
 
 module.exports=function createLotteryService(dataDir){
   const CONFIG_FILE=path.join(dataDir,'lottery','config.json');
@@ -34,6 +37,8 @@ module.exports=function createLotteryService(dataDir){
     sDraws:2,
     maxUnredeemedTickets:5,
     maxWinsPerPlayer:5,
+    redeemDeadline:'',
+    redeemMethod:'',
     rules:'每次完整通关可抽奖1次，获得S级评价可抽奖2次。每位玩家在本活动中的获奖次数以上限设置为准，奖券须凭8位兑换码核销。',
     prizes:[],
     updatedAt:0
@@ -81,6 +86,8 @@ module.exports=function createLotteryService(dataDir){
       sDraws:p.sDraws==null?(prev.sDraws==null?2:Number(prev.sDraws)):Number(p.sDraws),
       maxUnredeemedTickets:p.maxUnredeemedTickets==null?(prev.maxUnredeemedTickets==null?5:Number(prev.maxUnredeemedTickets)):Number(p.maxUnredeemedTickets),
       maxWinsPerPlayer:p.maxWinsPerPlayer==null?(prev.maxWinsPerPlayer==null?5:Number(prev.maxWinsPerPlayer)):Number(p.maxWinsPerPlayer),
+      redeemDeadline:cleanDate(p.redeemDeadline!=null?p.redeemDeadline:prev.redeemDeadline),
+      redeemMethod:p.redeemMethod!=null?cleanText(p.redeemMethod,500):cleanText(prev.redeemMethod,500),
       rules:p.rules!=null?cleanText(p.rules,5000):cleanText(prev.rules,5000),
       prizes,
       updatedAt:Date.now()
@@ -101,6 +108,8 @@ module.exports=function createLotteryService(dataDir){
     p.sDraws=Number.isInteger(Number(old.sDraws))?Number(old.sDraws):2;
     p.maxUnredeemedTickets=Number.isInteger(Number(old.maxUnredeemedTickets))?Number(old.maxUnredeemedTickets):5;
     p.maxWinsPerPlayer=5;
+    p.redeemDeadline=cleanDate(old.redeemDeadline);
+    p.redeemMethod=cleanText(old.redeemMethod,500);
     p.rules=cleanText(old.rules,5000)||p.rules;
     p.prizes=Array.isArray(old.prizes)?old.prizes:[];
     p.updatedAt=Number(old.updatedAt)||0;
@@ -141,12 +150,13 @@ module.exports=function createLotteryService(dataDir){
       activityActive:phase.active,
       eligibilityReason:phase.reason,
       eligibilityCode:phase.code,
-      project:{id:project.id,name:project.name,startAt:project.startAt,endAt:project.endAt,maxWinsPerPlayer:project.maxWinsPerPlayer},
+      project:{id:project.id,name:project.name,startAt:project.startAt,endAt:project.endAt,maxWinsPerPlayer:project.maxWinsPerPlayer,redeemDeadline:project.redeemDeadline||'',redeemMethod:project.redeemMethod||''},
       projectId:project.id,
       projectName:project.name,
       startAt:project.startAt,endAt:project.endAt,
       rules:project.rules,normalDraws:project.normalDraws,sDraws:project.sDraws,
       maxUnredeemedTickets:project.maxUnredeemedTickets,maxWinsPerPlayer:project.maxWinsPerPlayer,
+      redeemDeadline:project.redeemDeadline||'',redeemMethod:project.redeemMethod||'',
       prizes:project.prizes.map(p=>({id:p.id,awardName:p.awardName||'',name:p.name,imageUrl:p.imageUrl,remainingQuantity:p.remainingQuantity,probability:p.probability,note:p.note}))
     };
   }
@@ -184,8 +194,11 @@ module.exports=function createLotteryService(dataDir){
     if(!best['1']&&!best[1])total+=Math.max(0,Number(s.stage1Best)||0);
     return Math.floor(total);
   }
-  function ticketPublic(t){
-    return {id:t.id,code:t.code,projectId:t.projectId||'',projectName:t.projectName||'',prizeId:t.prizeId,awardName:t.awardName||'',prizeName:t.prizeName,imageUrl:t.imageUrl||'',note:t.note||'',debug:!!t.debug,invalid:!!t.debug,redeemed:!!t.redeemed,createdAt:t.createdAt||0,redeemedAt:t.redeemedAt||0};
+  function ticketPublic(t,cfg){
+    let deadline=cleanDate(t.redeemDeadline),method=cleanText(t.redeemMethod,500);
+    if((!deadline||!method)&&cfg){const p=(cfg.projects||[]).find(x=>String(x.id)===String(t.projectId||'project_default'));if(p){if(!deadline)deadline=cleanDate(p.redeemDeadline);if(!method)method=cleanText(p.redeemMethod,500);}}
+    const expired=!t.debug&&!t.redeemed&&isExpiredDate(deadline,Date.now());
+    return {id:t.id,code:t.code,projectId:t.projectId||'',projectName:t.projectName||'',prizeId:t.prizeId,awardName:t.awardName||'',prizeName:t.prizeName,imageUrl:t.imageUrl||'',note:t.note||'',redeemDeadline:deadline,redeemMethod:method,expired,debug:!!t.debug,invalid:!!t.debug,redeemed:!!t.redeemed,createdAt:t.createdAt||0,redeemedAt:t.redeemedAt||0};
   }
   function usageBucket(state,userId,projectId){
     if(!state.usageByUser[userId]||typeof state.usageByUser[userId]!=='object')state.usageByUser[userId]={};
@@ -229,7 +242,7 @@ module.exports=function createLotteryService(dataDir){
       profileReady,completed,grade,score,drawsAllowed:allowed,drawsUsed:used,drawsRemaining,
       eligibilityReason:reason,eligibilityCode:code,canDraw:code==='OK',
       prizeLimit:maxWins,prizeCount:formalCount,pendingPrizeCount:pendingCount,maxUnredeemedTickets:pendingLimit,pendingLimitReached:pendingCount>=pendingLimit,
-      debugMode,debugUnlimited:!!(cfg.enabled&&project&&debugMode),tickets:allTickets.map(ticketPublic)
+      debugMode,debugUnlimited:!!(cfg.enabled&&project&&debugMode),tickets:allTickets.map(t=>ticketPublic(t,cfg))
     });
   }
 
@@ -261,7 +274,7 @@ module.exports=function createLotteryService(dataDir){
     }
     let ticket=null;
     if(prize){
-      ticket={id:'ticket_'+Date.now().toString(36)+'_'+crypto.randomBytes(4).toString('hex'),code:uniqueCode(state),userId,projectId:project.id,projectName:project.name,prizeId:prize.id,awardName:prize.awardName||'',prizeName:prize.name,imageUrl:prize.imageUrl||'',note:prize.note||'',debug,redeemed:false,createdAt:Date.now(),redeemedAt:0};
+      ticket={id:'ticket_'+Date.now().toString(36)+'_'+crypto.randomBytes(4).toString('hex'),code:uniqueCode(state),userId,projectId:project.id,projectName:project.name,prizeId:prize.id,awardName:prize.awardName||'',prizeName:prize.name,imageUrl:prize.imageUrl||'',note:prize.note||'',redeemDeadline:project.redeemDeadline||'',redeemMethod:project.redeemMethod||'',debug,redeemed:false,createdAt:Date.now(),redeemedAt:0};
       state.tickets.push(ticket);
       if(!debug){
         const live=project.prizes.find(p=>p.id===prize.id);
@@ -269,7 +282,7 @@ module.exports=function createLotteryService(dataDir){
       }
     }
     writeState(state);
-    return {ok:true,won:!!ticket,prize:ticket?{id:ticket.prizeId,awardName:ticket.awardName||'',name:ticket.prizeName,imageUrl:ticket.imageUrl,note:ticket.note}:null,ticket:ticket?ticketPublic(ticket):null,status:status(a)};
+    return {ok:true,won:!!ticket,prize:ticket?{id:ticket.prizeId,awardName:ticket.awardName||'',name:ticket.prizeName,imageUrl:ticket.imageUrl,note:ticket.note,redeemDeadline:ticket.redeemDeadline||'',redeemMethod:ticket.redeemMethod||''}:null,ticket:ticket?ticketPublic(ticket,cfg):null,status:status(a)};
   }
   function clearDebug(userId){
     const state=readState(),before=state.tickets.length;
@@ -278,15 +291,17 @@ module.exports=function createLotteryService(dataDir){
   }
   function findTicket(code){
     const state=readState(),ticket=state.tickets.find(t=>String(t.code)===String(code||'').trim());
-    return ticket?ticketPublic(ticket):null;
+    const cfg=getConfig();return ticket?ticketPublic(ticket,cfg):null;
   }
   function redeem(code,actor){
     const state=readState(),ticket=state.tickets.find(t=>String(t.code)===String(code||'').trim());
     if(!ticket)fail(404,'未找到该兑奖码');
     if(ticket.debug)fail(409,'调试奖券无效，不能核销');
+    const cfg=getConfig(),publicTicket=ticketPublic(ticket,cfg);
+    if(publicTicket.expired)fail(409,'该奖券兑奖期限已过，不能核销');
     const alreadyRedeemed=!!ticket.redeemed;
     if(!alreadyRedeemed){ticket.redeemed=true;ticket.redeemedAt=Date.now();ticket.redeemedBy=actor||{id:'admin',name:'管理员'};writeState(state);}
-    return {ok:true,alreadyRedeemed,ticket:ticketPublic(ticket)};
+    return {ok:true,alreadyRedeemed,ticket:ticketPublic(ticket,cfg)};
   }
   function summary(){
     const s=readState(),formal=s.tickets.filter(t=>!t.debug),debug=s.tickets.filter(t=>t.debug),cfg=getConfig(),project=activeProject(cfg);
