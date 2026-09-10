@@ -20,7 +20,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const VERSION = '6.00.1';
+const VERSION = '6.00.2';
 const PORT = Number(process.env.PORT || 3000);
 const APPID = String(process.env.WECHAT_APPID || '').trim();
 const APPSECRET = String(process.env.WECHAT_APPSECRET || '').trim();
@@ -763,13 +763,23 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (p === '/api/admin/login' && req.method === 'POST') { await handleAdminLogin(req, res); return; }
+    if (p === '/api/admin/session' && req.method === 'GET') {
+      const admin = requireAdmin(req, res); if (!admin) return;
+      json(res, 200, { ok: true, sub: admin.sub || 'admin', subAdmin: !!admin.subAdmin, permissions: Array.isArray(admin.permissions) ? admin.permissions : [] }); return;
+    }
     if (p === '/api/admin/summary' && req.method === 'GET') {
       if (!requireAdmin(req, res)) return;
       const db = readUsersDb(), users = Object.values(db.usersByOpenid || {}), now = Date.now();
       let saves = 0, completed = 0;
       for (const user of users) { const rec = user && user.userId ? readSaveRecord(user.userId) : null; if (rec) { saves++; if (rec.save && rec.save.gameCompleted) completed++; } }
       const lb = readLeaderboard(), formalCount = Math.min(200, formalSortedEntries(lb.entries).length);
-      json(res, 200, Object.assign({ users: users.length, saves, completed, active7d: users.filter((x) => now - Number(x.lastLoginAt || 0) <= 7 * 86400000).length, leaderboard: formalCount, version: VERSION }, lottery.summary())); return;
+      let lotterySummary = {};
+      try { lotterySummary = lottery.summary() || {}; }
+      catch (e) {
+        console.warn('[admin summary] lottery summary failed:', e && e.message ? e.message : e);
+        lotterySummary = { lotteryWarning: '抽奖数据暂时无法读取：' + String(e && e.message ? e.message : 'unknown error') };
+      }
+      json(res, 200, Object.assign({ users: users.length, saves, completed, active7d: users.filter((x) => now - Number(x.lastLoginAt || 0) <= 7 * 86400000).length, leaderboard: formalCount, version: VERSION }, lotterySummary)); return;
     }
     if (p === '/api/admin/players' && req.method === 'GET') { if (!requireAdmin(req, res)) return; json(res, 200, adminPlayers(Object.fromEntries(u.searchParams.entries()))); return; }
     if (p === '/api/admin/players/export' && req.method === 'GET') {
